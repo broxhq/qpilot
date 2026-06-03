@@ -1,6 +1,6 @@
 {
   "name": "qpilot",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Run manual test cases with an AI agent in a real browser",
   "bin": {
     "qpilot": "bin/qa-agent.js"
