@@ -1,0 +1,22 @@
+# deps
+node_modules
+
+# next.js
+.next
+
+# env — never commit API keys
+.env
+.env.local
+.env*.local
+
+# build artifacts
+tsconfig.tsbuildinfo
+*.tgz
+*.log
+
+# claude code internal
+.claude
+CLAUDE.md
+
+# os
+.DS_Store
