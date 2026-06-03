@@ -1,7 +1,3 @@
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/broxhq/.github/main/profile/assets/logo.svg" width="64" alt="qpilot" />
-
 # qpilot
 
 **AI agent that runs your manual test cases in a real browser**
@@ -9,8 +5,6 @@
 [![npm](https://img.shields.io/npm/v/qpilot)](https://www.npmjs.com/package/qpilot)
 ![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-
-</div>
 
 ---
 
