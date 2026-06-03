@@ -29,7 +29,8 @@ DO NOT HALLUCINATE:
 - evidence — verbatim quote from the snapshot.
 - No element → fail, do not invent.
 
-Elements: ref=[eN] from snapshot is required for click/fill. Stale after page change — take a new snapshot.
+Elements: ref=[eN] from snapshot is required for click/fill/select/hover. Stale after page change — take a new snapshot.
+For <select> dropdowns use select, not click. Use scroll to reveal elements below the fold.
 Do not write [ref=eN] in description/evidence.
 
 ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
@@ -142,6 +143,25 @@ async function executeTool(
       const loc = await locate(page, input);
       await loc.fill(String(input.value), { timeout: 5000 });
       return { content: `OK: filled "${input.value}" into ${input.name ?? input.ref}` };
+    }
+
+    case "select": {
+      const loc = await locate(page, input);
+      await loc.selectOption(String(input.value), { timeout: 5000 });
+      return { content: `OK: selected "${input.value}" in ${input.name ?? input.ref}` };
+    }
+
+    case "hover": {
+      const loc = await locate(page, input);
+      await loc.hover({ timeout: 5000 });
+      return { content: `OK: hovered ${input.name ?? input.ref}` };
+    }
+
+    case "scroll": {
+      const x = Number(input.x) || 0;
+      const y = Number(input.y) || 0;
+      await page.mouse.wheel(x, y);
+      return { content: `OK: scrolled (${x}, ${y})` };
     }
 
     case "press":

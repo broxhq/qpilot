@@ -91,6 +91,43 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "select",
+    description: "Choose an option in a <select> dropdown. ref from snapshot is required.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "ref of the <select> element from snapshot, e.g. e9" },
+        value: { type: "string", description: "Option value or visible label to select" },
+        name: { type: "string", description: "Human-readable label for the log" },
+      },
+      required: ["ref", "value"],
+    },
+  },
+  {
+    name: "hover",
+    description: "Hover the mouse over an element (to reveal tooltips, dropdowns, etc). ref from snapshot is required.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "ref of the element from snapshot, e.g. e5" },
+        name: { type: "string", description: "Human-readable label for the log" },
+      },
+      required: ["ref"],
+    },
+  },
+  {
+    name: "scroll",
+    description: "Scroll the page by pixel offset. Use to reveal elements below the fold.",
+    input_schema: {
+      type: "object",
+      properties: {
+        x: { type: "number", description: "Horizontal scroll in pixels (usually 0)" },
+        y: { type: "number", description: "Vertical scroll in pixels (positive = down)" },
+      },
+      required: ["y"],
+    },
+  },
+  {
     name: "ask_user",
     description:
       "Ask the user for ONE specific value needed right now (OTP/SMS code, captcha, phone number for login). Use ONLY when the value is not in the test case and the agent cannot know it. prompt must describe exactly the field currently on screen (by its label/placeholder from the snapshot).",
