@@ -181,7 +181,7 @@ export const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-const MAX_SNAPSHOT_CHARS = 3000;
+const MAX_SNAPSHOT_CHARS = 8000;
 
 export async function snapshot(page: Page): Promise<string> {
   const url = page.url();
