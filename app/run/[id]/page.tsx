@@ -523,6 +523,7 @@ function describeAction(name?: string, input?: unknown): string {
     case "fill":     return p.name ? `Filling "${p.name}" → "${p.value ?? ""}"` : `Filling "${p.value ?? ""}"`;
     case "select":   return p.name ? `Selecting "${p.value ?? ""}" in "${p.name}"` : `Selecting "${p.value ?? ""}"`;
     case "hover":    return p.name ? `Hovering "${p.name}"` : "Hovering element";
+    case "scroll_to": return `Scrolling to "${p.text ?? ""}"`;
     case "scroll":   return `Scrolling ${p.y ?? 0}px`;
     case "press":    return `Pressing ${p.key ?? ""}`;
     case "wait":     return `Waiting ${p.ms ?? ""} ms`;

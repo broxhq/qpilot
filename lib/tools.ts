@@ -116,6 +116,17 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "scroll_to",
+    description: "Scroll the page until an element containing the given text is visible. Use this instead of blind pixel scrolling when you know what text/heading you're looking for. After calling, take a snapshot to see the element and its ref.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Visible text of the target element or section heading, e.g. 'Top ads' or 'Show all'" },
+      },
+      required: ["text"],
+    },
+  },
+  {
     name: "scroll",
     description: "Scroll by pixel offset. Without ref — scrolls the main window. With ref — scrolls that specific container (use when content is inside a scrollable div, not the page itself).",
     input_schema: {

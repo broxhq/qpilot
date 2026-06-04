@@ -30,7 +30,8 @@ DO NOT HALLUCINATE:
 - No element → fail, do not invent.
 
 Elements: ref=[eN] from snapshot is required for click/fill/select/hover. Stale after page change — take a new snapshot.
-For <select> dropdowns use select, not click. Use scroll to reveal elements below the fold. If scrolling the window doesn't change the snapshot, the content is inside a scrollable container — use scroll with the container's ref.
+For <select> dropdowns use select, not click.
+Scrolling: prefer scroll_to when you know the target text — it finds the element and scrolls to it directly. Use scroll (pixels) only for fine-tuning position. If window scroll doesn't change the snapshot, the content is in a scrollable container — use scroll with the container's ref.
 Do not write [ref=eN] in description/evidence.
 
 ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
@@ -161,6 +162,16 @@ async function executeTool(
       const loc = await locate(page, input);
       await loc.hover({ timeout: 5000 });
       return { content: `OK: hovered ${input.name ?? input.ref}` };
+    }
+
+    case "scroll_to": {
+      const text = String(input.text ?? "");
+      const loc = page.getByText(text, { exact: false }).first();
+      if ((await loc.count()) === 0) {
+        return { content: `Not found on page: "${text}" — check the text or try a shorter substring` };
+      }
+      await loc.scrollIntoViewIfNeeded({ timeout: 5000 });
+      return { content: `OK: scrolled to element containing "${text}". Take a snapshot to see it.` };
     }
 
     case "scroll": {
