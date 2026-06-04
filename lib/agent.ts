@@ -31,7 +31,16 @@ DO NOT HALLUCINATE:
 
 Elements: ref=[eN] from snapshot is required for click/fill/select/hover. Stale after page change — take a new snapshot.
 For <select> dropdowns use select, not click.
-Scrolling: prefer scroll_to when you know the target text — it finds the element and scrolls to it directly. Use scroll (pixels) only for fine-tuning position. If window scroll doesn't change the snapshot, the content is in a scrollable container — use scroll with the container's ref.
+
+Finding elements (IMPORTANT): the snapshot is the WHOLE loaded page, not just the visible part. Scrolling does NOT add elements to it — if a control exists it's already in the tree. So DO NOT scroll repeatedly to "find" a button.
+- To act on a control in a named section (e.g. "Show all" in the "Top ads" block), call snapshot with near='Top ads' — it returns just that block's tree with refs, never truncated, and disambiguates duplicate labels (there can be many "Show all"). Then click the ref. This is the right tool for "do X in section Y".
+- If a snapshot is truncated, use near=… to zoom in — never scroll to fix truncation.
+- Scroll only to: trigger lazy-loaded / infinite-scroll content that isn't in the DOM yet, or position something for a screenshot.
+
+Scrolling:
+- scroll_to(text or ref) — auto-scrolls whatever container holds the target (page, inner div, or sideways) until it's visible.
+- scroll(y, x?, ref?) for pixel scrolling. No ref = main window. To scroll a block INSIDE the page (list, panel, modal body with its own scrollbar), pass ref of ANY element inside that block — the scrollable container is found automatically. Use x for horizontal (carousels, wide tables).
+- scroll returns position and limits (e.g. "Vertical 800/2400px") and flags edges/no-movement — read it: if the window didn't move, content is in an inner block, retry with a ref inside it.
 Do not write [ref=eN] in description/evidence.
 
 ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
@@ -78,6 +87,108 @@ async function captureEvidence(page: Page): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+type ScrollResult = {
+  kind: "window" | "container";
+  tag?: string;
+  movedX: number;
+  movedY: number;
+  posY: number;
+  maxY: number;
+  posX: number;
+  maxX: number;
+};
+
+// Runs IN THE BROWSER (serialized by Playwright). Args are normalized so the
+// same function works for page.evaluate(fn, arg) → fn(arg) and
+// locator.evaluate(fn, arg) → fn(el, arg). When an element is given, scrolls
+// the nearest scrollable ancestor (the real scroll container is usually not the
+// element itself); otherwise scrolls the main window.
+function scrollNearest(
+  a: Element | { x: number; y: number },
+  b?: { x: number; y: number },
+): ScrollResult {
+  const el = (b === undefined ? null : a) as Element | null;
+  const { x: dx, y: dy } = (b === undefined ? a : b) as { x: number; y: number };
+
+  const findScrollable = (start: Element | null, axis: "x" | "y"): Element | null => {
+    let n: Element | null = start;
+    while (n && n !== document.body && n !== document.documentElement) {
+      const s = getComputedStyle(n);
+      const ov = axis === "x" ? s.overflowX : s.overflowY;
+      const room =
+        axis === "x"
+          ? n.scrollWidth > n.clientWidth + 1
+          : n.scrollHeight > n.clientHeight + 1;
+      if (/(auto|scroll|overlay)/.test(ov) && room) return n;
+      n = n.parentElement;
+    }
+    return null;
+  };
+
+  // Prefer the axis with the larger requested delta, fall back to the other.
+  const axis = Math.abs(dy) >= Math.abs(dx) ? "y" : "x";
+  const target = el
+    ? findScrollable(el, axis) ?? findScrollable(el, axis === "y" ? "x" : "y")
+    : null;
+
+  if (!target) {
+    const beforeX = window.scrollX;
+    const beforeY = window.scrollY;
+    window.scrollBy(dx, dy);
+    const doc = document.documentElement;
+    return {
+      kind: "window",
+      movedX: window.scrollX - beforeX,
+      movedY: window.scrollY - beforeY,
+      posY: Math.round(window.scrollY),
+      maxY: Math.round(doc.scrollHeight - window.innerHeight),
+      posX: Math.round(window.scrollX),
+      maxX: Math.round(doc.scrollWidth - window.innerWidth),
+    };
+  }
+
+  const beforeLeft = target.scrollLeft;
+  const beforeTop = target.scrollTop;
+  target.scrollBy(dx, dy);
+  return {
+    kind: "container",
+    tag: target.tagName.toLowerCase(),
+    movedX: target.scrollLeft - beforeLeft,
+    movedY: target.scrollTop - beforeTop,
+    posY: Math.round(target.scrollTop),
+    maxY: Math.round(target.scrollHeight - target.clientHeight),
+    posX: Math.round(target.scrollLeft),
+    maxX: Math.round(target.scrollWidth - target.clientWidth),
+  };
+}
+
+// Human/model-readable summary: how far it moved, current position vs. limit,
+// and hints when nothing happened (likely an inner scroll container).
+function describeScroll(r: ScrollResult, reqX: number, reqY: number): string {
+  const where = r.kind === "window" ? "window" : `<${r.tag}> block`;
+  const parts: string[] = [`OK: scrolled ${where} by (${r.movedX}, ${r.movedY})px.`];
+
+  if (reqY !== 0 || r.movedY !== 0) {
+    const edge =
+      r.posY >= r.maxY - 2 ? " (bottom reached)" : r.posY <= 2 ? " (top)" : "";
+    parts.push(`Vertical ${r.posY}/${r.maxY}px${edge}.`);
+  }
+  if (reqX !== 0 || r.movedX !== 0) {
+    const edge =
+      r.posX >= r.maxX - 2 ? " (rightmost)" : r.posX <= 2 ? " (leftmost)" : "";
+    parts.push(`Horizontal ${r.posX}/${r.maxX}px${edge}.`);
+  }
+  if (r.movedX === 0 && r.movedY === 0) {
+    parts.push(
+      r.kind === "window" && (reqX !== 0 || reqY !== 0)
+        ? "Window did not move — the content is likely inside a scrollable block; pass a ref of an element inside that block to scroll it."
+        : "No movement — already at the edge in that direction.",
+    );
+  }
+  parts.push("Take a snapshot to see new content.");
+  return parts.join(" ");
 }
 
 async function executeTool(
@@ -132,7 +243,12 @@ async function executeTool(
       return { content: `OK: navigated to ${input.url}` };
 
     case "snapshot":
-      return { content: await snapshot(page) };
+      return {
+        content: await snapshot(
+          page,
+          typeof input.near === "string" ? input.near : undefined,
+        ),
+      };
 
     case "click": {
       const loc = await locate(page, input);
@@ -165,27 +281,48 @@ async function executeTool(
     }
 
     case "scroll_to": {
+      const ref = typeof input.ref === "string" ? input.ref.trim() : "";
       const text = String(input.text ?? "");
-      const loc = page.getByText(text, { exact: false }).first();
-      if ((await loc.count()) === 0) {
-        return { content: `Not found on page: "${text}" — check the text or try a shorter substring` };
+      let loc: Locator;
+      let label: string;
+      if (/^e\d+$/.test(ref)) {
+        loc = page.locator(`aria-ref=${ref}`);
+        label = `ref ${ref}`;
+        if ((await loc.count()) === 0) {
+          return { content: `ref ${ref} not found — take a fresh snapshot` };
+        }
+      } else if (text) {
+        loc = page.getByText(text, { exact: false }).first();
+        label = `element containing "${text}"`;
+        if ((await loc.count()) === 0) {
+          return { content: `Not found on page: "${text}" — try a shorter/unique substring, or it may not be loaded yet (scroll the page first to trigger lazy loading)` };
+        }
+      } else {
+        return { content: "Provide either text or ref to scroll to." };
       }
+      // scrollIntoViewIfNeeded walks up and scrolls every scrollable ancestor
+      // (page, inner divs, horizontal) as needed to reveal the element.
       await loc.scrollIntoViewIfNeeded({ timeout: 5000 });
-      return { content: `OK: scrolled to element containing "${text}". Take a snapshot to see it.` };
+      return { content: `OK: scrolled to ${label}. Take a snapshot to see it and get a fresh ref.` };
     }
 
     case "scroll": {
       const x = Number(input.x) || 0;
       const y = Number(input.y) || 0;
-      if (typeof input.ref === "string" && /^e\d+$/.test(input.ref.trim())) {
-        // scroll a specific container element
-        const loc = page.locator(`aria-ref=${input.ref.trim()}`);
-        await loc.evaluate((el, { x, y }) => el.scrollBy(x, y), { x, y });
-        return { content: `OK: scrolled container ${input.ref} by (${x}, ${y})` };
+      const ref = typeof input.ref === "string" ? input.ref.trim() : "";
+
+      let res: ScrollResult;
+      if (/^e\d+$/.test(ref)) {
+        const loc = page.locator(`aria-ref=${ref}`);
+        if ((await loc.count()) === 0) {
+          return { content: `ref ${ref} not found — take a fresh snapshot` };
+        }
+        // Find the nearest scrollable ancestor of the ref'd element and scroll it.
+        res = await loc.evaluate(scrollNearest, { x, y });
+      } else {
+        res = await page.evaluate(scrollNearest, { x, y });
       }
-      // scroll the main window
-      await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x, y });
-      return { content: `OK: scrolled window by (${x}, ${y})` };
+      return { content: describeScroll(res, x, y) };
     }
 
     case "press":

@@ -518,13 +518,20 @@ function describeAction(name?: string, input?: unknown): string {
   const p = (input ?? {}) as Record<string, unknown>;
   switch (name) {
     case "navigate": return `Opening ${p.url ?? ""}`;
-    case "snapshot": return "Reading page";
+    case "snapshot": return p.near ? `Reading "${p.near}" block` : "Reading page";
     case "click":    return p.name ? `Clicking "${p.name}"` : "Clicking element";
     case "fill":     return p.name ? `Filling "${p.name}" → "${p.value ?? ""}"` : `Filling "${p.value ?? ""}"`;
     case "select":   return p.name ? `Selecting "${p.value ?? ""}" in "${p.name}"` : `Selecting "${p.value ?? ""}"`;
     case "hover":    return p.name ? `Hovering "${p.name}"` : "Hovering element";
-    case "scroll_to": return `Scrolling to "${p.text ?? ""}"`;
-    case "scroll":   return `Scrolling ${p.y ?? 0}px`;
+    case "scroll_to": return `Scrolling to ${p.text ? `"${p.text}"` : p.ref ?? "element"}`;
+    case "scroll": {
+      const dirs = [
+        Number(p.y) ? `${Number(p.y) > 0 ? "down" : "up"} ${Math.abs(Number(p.y))}px` : "",
+        Number(p.x) ? `${Number(p.x) > 0 ? "right" : "left"} ${Math.abs(Number(p.x))}px` : "",
+      ].filter(Boolean).join(", ");
+      const target = p.ref ? ` inside ${p.ref}` : "";
+      return `Scrolling ${dirs || "0px"}${target}`;
+    }
     case "press":    return `Pressing ${p.key ?? ""}`;
     case "wait":     return `Waiting ${p.ms ?? ""} ms`;
     case "ask_user": return "Asking user";

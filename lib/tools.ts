@@ -44,8 +44,16 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "snapshot",
     description:
-      "Get the current page state: URL, title, and ARIA tree with ref=[eN] on each element — pass those refs to click/fill. Call after every page change.",
-    input_schema: { type: "object", properties: {} },
+      "Get the page state: URL, title, and ARIA tree with ref=[eN] on each element — pass those refs to click/fill. The tree covers the WHOLE loaded page, not just the visible viewport — scrolling does NOT add elements to it. Call after every page change. If the tree is truncated or you need a specific section, pass `near` to zoom into just that block (e.g. near='Top ads') — this is unambiguous and never truncated, use it instead of scrolling to hunt for a control.",
+    input_schema: {
+      type: "object",
+      properties: {
+        near: {
+          type: "string",
+          description: "Optional: visible text of a section/heading to scope the snapshot to that block only, e.g. 'Top ads'. Returns the surrounding container's subtree with refs.",
+        },
+      },
+    },
   },
   {
     name: "click",
@@ -117,24 +125,24 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "scroll_to",
-    description: "Scroll the page until an element containing the given text is visible. Use this instead of blind pixel scrolling when you know what text/heading you're looking for. After calling, take a snapshot to see the element and its ref.",
+    description: "Scroll until a target element is visible. PREFERRED over pixel scroll when you know what you're looking for. Automatically scrolls the right container (page, inner scrollable div, or sideways) to reveal it. Target by text OR by ref. After calling, take a snapshot to get a fresh ref.",
     input_schema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "Visible text of the target element or section heading, e.g. 'Top ads' or 'Show all'" },
+        text: { type: "string", description: "Visible text of the target element or section heading, e.g. 'Top ads' or 'Show all'. Use a short, unique substring." },
+        ref: { type: "string", description: "Alternatively, ref of the target from a snapshot (e.g. e14) — use for icons/unlabeled elements with no stable text." },
       },
-      required: ["text"],
     },
   },
   {
     name: "scroll",
-    description: "Scroll by pixel offset. Without ref — scrolls the main window. With ref — scrolls that specific container (use when content is inside a scrollable div, not the page itself).",
+    description: "Scroll by a pixel offset. Without ref — scrolls the main window. With ref — scrolls the nearest scrollable block CONTAINING that element (pass any ref inside the block you want to scroll; the actual scroll container is found automatically). Returns the new position and whether the end is reached. Prefer scroll_to when you know the target.",
     input_schema: {
       type: "object",
       properties: {
-        y: { type: "number", description: "Vertical scroll in pixels (positive = down, negative = up)" },
-        x: { type: "number", description: "Horizontal scroll in pixels (usually 0)" },
-        ref: { type: "string", description: "Optional ref of the scrollable container element from snapshot, e.g. e14. Omit to scroll the main window." },
+        y: { type: "number", description: "Vertical scroll in pixels (positive = down, negative = up). 0 for pure horizontal." },
+        x: { type: "number", description: "Horizontal scroll in pixels (positive = right, negative = left). Default 0." },
+        ref: { type: "string", description: "Optional ref of any element inside the block to scroll, e.g. e14. Omit to scroll the main window." },
       },
       required: ["y"],
     },
@@ -195,28 +203,71 @@ export const TOOLS: Anthropic.Tool[] = [
 
 const MAX_SNAPSHOT_CHARS = 8000;
 
-export async function snapshot(page: Page): Promise<string> {
+export async function snapshot(page: Page, near?: string): Promise<string> {
   const url = page.url();
   if (!url || url === "about:blank") {
     return `URL: ${url || "about:blank"}\n\nPage not opened yet. Call navigate with the starting URL from the test case first.`;
   }
   const title = await page.title().catch(() => "");
 
+  // Default scope = whole body. If `near` is given, scope to the section block
+  // around that text so the relevant controls aren't lost to truncation and
+  // duplicate labels (e.g. several "Show all") are disambiguated.
+  let target = page.locator("body");
+  let scopeNote = "";
+  const wanted = near?.trim();
+  if (wanted) {
+    const anchor = page.getByText(wanted, { exact: false }).first();
+    if ((await anchor.count()) > 0) {
+      // Climb from the matched text to a meaningful container (first ancestor
+      // with enough descendants), tag it, and snapshot just that subtree.
+      const tagged = await anchor
+        .evaluate((el, max) => {
+          let n: Element | null = el;
+          let best: Element = el;
+          for (let i = 0; i < max && n; i++) {
+            best = n;
+            if (n.querySelectorAll("*").length >= 25) break;
+            n = n.parentElement;
+          }
+          best.setAttribute("data-qa-scope", "1");
+          return true;
+        }, 8)
+        .catch(() => false);
+      if (tagged) {
+        target = page.locator('[data-qa-scope="1"]').first();
+        scopeNote = ` (scoped to the block around "${wanted}")`;
+      }
+    } else {
+      scopeNote = ` ("${wanted}" not found — showing full page)`;
+    }
+  }
+
   let tree = "";
   try {
-    tree = await page
-      .locator("body")
-      .ariaSnapshot({ mode: "ai", timeout: 5000 });
+    tree = await target.ariaSnapshot({ mode: "ai", timeout: 5000 });
   } catch (err) {
     tree = `(snapshot failed: ${err instanceof Error ? err.message : String(err)})`;
+  } finally {
+    if (wanted) {
+      await page
+        .evaluate(() =>
+          document
+            .querySelectorAll('[data-qa-scope="1"]')
+            .forEach((el) => el.removeAttribute("data-qa-scope")),
+        )
+        .catch(() => {});
+    }
   }
   if (tree.length > MAX_SNAPSHOT_CHARS) {
-    tree = tree.slice(0, MAX_SNAPSHOT_CHARS) + "\n... (truncated)";
+    tree =
+      tree.slice(0, MAX_SNAPSHOT_CHARS) +
+      "\n... (truncated — scrolling won't help; use snapshot with `near` to zoom into the section you need)";
   }
 
   return [
     `URL: ${url}`,
-    `Title: ${title}`,
+    `Title: ${title}${scopeNote}`,
     "",
     "Page snapshot (pass [ref=…] of the target element to click/fill):",
     tree,
