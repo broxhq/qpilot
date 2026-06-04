@@ -117,12 +117,13 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "scroll",
-    description: "Scroll the page by pixel offset. Use to reveal elements below the fold.",
+    description: "Scroll by pixel offset. Without ref — scrolls the main window. With ref — scrolls that specific container (use when content is inside a scrollable div, not the page itself).",
     input_schema: {
       type: "object",
       properties: {
+        y: { type: "number", description: "Vertical scroll in pixels (positive = down, negative = up)" },
         x: { type: "number", description: "Horizontal scroll in pixels (usually 0)" },
-        y: { type: "number", description: "Vertical scroll in pixels (positive = down)" },
+        ref: { type: "string", description: "Optional ref of the scrollable container element from snapshot, e.g. e14. Omit to scroll the main window." },
       },
       required: ["y"],
     },

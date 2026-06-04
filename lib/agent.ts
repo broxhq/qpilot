@@ -30,7 +30,7 @@ DO NOT HALLUCINATE:
 - No element → fail, do not invent.
 
 Elements: ref=[eN] from snapshot is required for click/fill/select/hover. Stale after page change — take a new snapshot.
-For <select> dropdowns use select, not click. Use scroll to reveal elements below the fold.
+For <select> dropdowns use select, not click. Use scroll to reveal elements below the fold. If scrolling the window doesn't change the snapshot, the content is inside a scrollable container — use scroll with the container's ref.
 Do not write [ref=eN] in description/evidence.
 
 ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
@@ -166,10 +166,15 @@ async function executeTool(
     case "scroll": {
       const x = Number(input.x) || 0;
       const y = Number(input.y) || 0;
-      // page.mouse.wheel only works if mouse is over a scrollable element,
-      // so use window.scrollBy which always works
+      if (typeof input.ref === "string" && /^e\d+$/.test(input.ref.trim())) {
+        // scroll a specific container element
+        const loc = page.locator(`aria-ref=${input.ref.trim()}`);
+        await loc.evaluate((el, { x, y }) => el.scrollBy(x, y), { x, y });
+        return { content: `OK: scrolled container ${input.ref} by (${x}, ${y})` };
+      }
+      // scroll the main window
       await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x, y });
-      return { content: `OK: scrolled by (${x}, ${y})` };
+      return { content: `OK: scrolled window by (${x}, ${y})` };
     }
 
     case "press":
