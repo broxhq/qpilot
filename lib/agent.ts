@@ -147,8 +147,14 @@ async function executeTool(
 
     case "select": {
       const loc = await locate(page, input);
-      await loc.selectOption(String(input.value), { timeout: 5000 });
-      return { content: `OK: selected "${input.value}" in ${input.name ?? input.ref}` };
+      const val = String(input.value);
+      // try by value first, fall back to visible label
+      try {
+        await loc.selectOption(val, { timeout: 5000 });
+      } catch {
+        await loc.selectOption({ label: val }, { timeout: 5000 });
+      }
+      return { content: `OK: selected "${val}" in ${input.name ?? input.ref}` };
     }
 
     case "hover": {
@@ -160,8 +166,10 @@ async function executeTool(
     case "scroll": {
       const x = Number(input.x) || 0;
       const y = Number(input.y) || 0;
-      await page.mouse.wheel(x, y);
-      return { content: `OK: scrolled (${x}, ${y})` };
+      // page.mouse.wheel only works if mouse is over a scrollable element,
+      // so use window.scrollBy which always works
+      await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x, y });
+      return { content: `OK: scrolled by (${x}, ${y})` };
     }
 
     case "press":
