@@ -3,8 +3,11 @@
 **AI agent that runs your manual test cases in a real browser**
 
 [![npm](https://img.shields.io/npm/v/qpilot)](https://www.npmjs.com/package/qpilot)
+[![GitHub stars](https://img.shields.io/github/stars/broxhq/qpilot?style=social)](https://github.com/broxhq/qpilot)
 ![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
+
+> If qpilot saved you time → **[⭐ Star it on GitHub](https://github.com/broxhq/qpilot)**. It helps more than you'd think.
 
 ---
 

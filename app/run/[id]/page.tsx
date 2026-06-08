@@ -12,6 +12,7 @@ import {
   Loader2,
   Pause,
   Play,
+  Star,
   X,
 } from "lucide-react";
 import type {
@@ -291,6 +292,9 @@ export default function RunPage({ params }: PageProps) {
         </div>
       )}
 
+      {/* star CTA — show once a run has finished (the "you just saw it work" moment) */}
+      {(status === "passed" || status === "failed") && <StarCta />}
+
       {/* question dialog */}
       <Dialog open={!!run?.pending}>
         <DialogContent showCloseButton={false}>
@@ -304,6 +308,30 @@ export default function RunPage({ params }: PageProps) {
 function formatDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function StarCta() {
+  return (
+    <a
+      href="https://github.com/broxhq/qpilot"
+      target="_blank"
+      rel="noreferrer"
+      className="group mt-6 flex items-center gap-3 rounded-xl border border-white/7 bg-card/60 px-4 py-3 transition-colors hover:border-warning/30 hover:bg-warning/[0.03]"
+    >
+      <Star className="size-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-warning group-hover:fill-warning" />
+      <div className="min-w-0">
+        <div className="text-sm text-foreground/80">
+          Did qpilot save you time?{" "}
+          <span className="text-foreground/95 group-hover:text-warning transition-colors">
+            Star it on GitHub
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground/50">
+          A ⭐ helps more people find it — takes two seconds.
+        </div>
+      </div>
+    </a>
+  );
 }
 
 

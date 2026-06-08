@@ -137,6 +137,11 @@ async function main() {
 
   const shutdown = () => {
     child.kill("SIGTERM");
+    console.log(
+      "\n  Thanks for using qpilot!" +
+        "\n  If it saved you time, a ⭐ means a lot:" +
+        "\n  https://github.com/broxhq/qpilot\n",
+    );
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
