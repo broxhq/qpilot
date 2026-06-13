@@ -4,7 +4,7 @@
 
 [![npm](https://img.shields.io/npm/v/qpilot)](https://www.npmjs.com/package/qpilot)
 [![GitHub stars](https://img.shields.io/github/stars/broxhq/qpilot?style=social)](https://github.com/broxhq/qpilot)
-![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
+![node](https://img.shields.io/badge/node-%3E%3D20.12-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
 > If qpilot saved you time → **[⭐ Star it on GitHub](https://github.com/broxhq/qpilot)**. It helps more than you'd think.
@@ -24,42 +24,69 @@ No code. No Selenium. No config files.
 
 ## Quick start
 
-**Requirements:** Node.js 18+, Google Chrome, an [Anthropic API key](https://console.anthropic.com)
+**Requirements:** Node.js 20.12+, Google Chrome, an [Anthropic API key](https://console.anthropic.com) — or any OpenAI-compatible model endpoint (Qwen, vLLM, Ollama, corporate gateway)
 
 ```bash
 npx qpilot
 ```
 
-That's it. If no API key is found, qpilot will ask for it on first run.
+That's it. On first run qpilot walks you through a quick provider setup (arrow-key menu), then every launch shows your config and a Start menu.
 
 Browser opens automatically at `http://localhost:3847`.
 
 ---
 
-## API key
+## Models & providers
 
-qpilot looks for the key in this order:
+On first run qpilot asks which model to use. You can re-run setup anytime:
+
+```bash
+npx qpilot config
+```
+
+Two options:
+
+- **Anthropic (Claude)** — enter your `sk-ant-…` key. Default model is `claude-haiku-4-5`.
+  Base URL is optional — set it if you reach Claude through a corporate proxy/gateway.
+- **Custom** — any **OpenAI-compatible** endpoint: Qwen, vLLM, Ollama, a corporate
+  gateway, OpenRouter, or OpenAI itself. You provide a **base URL**, **API token**
+  and **model id**, e.g.:
+
+  ```
+  Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  Model id: qwen2.5-72b-instruct
+  ```
+
+Your choice is saved to `~/.qpilot/config.json` (mode `600`) and reused on every run.
+
+> The custom path speaks the OpenAI `/chat/completions` protocol with tool calling —
+> so the model must support function/tool calling for the agent to drive the browser.
+
+### API key (Anthropic shortcut)
+
+For the Anthropic provider you can skip setup by supplying the key via env:
 
 1. `ANTHROPIC_API_KEY` environment variable
 2. `.env.local` file in the current directory
-3. Prompts you to enter it if neither is found
-
-To avoid entering it every time:
 
 ```bash
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env.local
 ```
 
+The key is never stored except in `~/.qpilot/config.json` when you run setup.
+
 ---
 
 ## Options
 
-| Flag | Description |
+| Command / flag | Description |
 |------|-------------|
-| `--visible` | Show the Chrome window while the agent runs |
+| `qpilot config` | Re-run provider setup (Anthropic or custom model) |
+| `--visible` | Show the Chrome window while the agent runs (also available in the start menu) |
 
 ```bash
 npx qpilot --visible
+npx qpilot config
 ```
 
 ---
@@ -91,6 +118,6 @@ You can paste multiple test cases at once — the agent runs them in order.
 
 ## Notes
 
-- API key is never stored — lives only in the running process
+- API key is stored only in `~/.qpilot/config.json` (file mode `600`) — never sent anywhere except your chosen model provider
 - Runs are in-memory; restarting clears them
 - Powered by [Claude](https://anthropic.com) + [Playwright](https://playwright.dev)

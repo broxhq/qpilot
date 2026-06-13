@@ -30,7 +30,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.12"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
@@ -55,5 +55,9 @@
     "type": "git",
     "url": "https://github.com/broxhq/qpilot.git"
   },
-  "homepage": "https://brox.sh"
+  "homepage": "https://brox.sh",
+  "dependencies": {
+    "@clack/prompts": "^1.5.1",
+    "picocolors": "^1.1.1"
+  }
 }

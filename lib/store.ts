@@ -2,23 +2,25 @@ import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { PendingQuestion, PlanGroup, Run, RunEvent } from "./types";
 
-const g = globalThis as unknown as {
-  __qa_runs?: Map<string, Run>;
-  __qa_emitters?: Map<string, EventEmitter>;
-  __qa_waiters?: Map<string, (answer: string) => void>;
-  __qa_pause_gates?: Map<string, () => void>;
-};
-const runs = (g.__qa_runs ??= new Map<string, Run>());
-const emitters = (g.__qa_emitters ??= new Map<string, EventEmitter>());
-const waiters = (g.__qa_waiters ??= new Map<string, (answer: string) => void>());
-const pauseGates = (g.__qa_pause_gates ??= new Map<string, () => void>());
+// Всё состояние одного прогона живёт в одной записи: сам Run, его emitter,
+// ожидающие ответа вопросы, pause-gate и скриншоты (JPEG-буферы, отдаются
+// через GET /api/run/[id]/shot/[num] — в события не инлайнятся).
+interface Entry {
+  run: Run;
+  emitter: EventEmitter;
+  waiters: Map<string, (answer: string) => void>;
+  pauseGate: (() => void) | null;
+  screenshots: Map<number, Buffer>;
+}
+
+const g = globalThis as unknown as { __qa_entries?: Map<string, Entry> };
+const entries = (g.__qa_entries ??= new Map<string, Entry>());
+
+const ACTIVE = new Set(["running", "waiting", "paused"]);
 
 export function createRun(id: string, title: string): Run {
-  for (const [k, v] of runs.entries()) {
-    if (v.status !== "running" && v.status !== "waiting" && v.status !== "paused") {
-      runs.delete(k);
-      emitters.delete(k);
-    }
+  for (const [k, e] of entries) {
+    if (!ACTIVE.has(e.run.status)) entries.delete(k);
   }
   const run: Run = {
     id,
@@ -29,17 +31,22 @@ export function createRun(id: string, title: string): Run {
     steps: [],
     pending: null,
   };
-  runs.set(id, run);
-  emitters.set(id, new EventEmitter());
+  entries.set(id, {
+    run,
+    emitter: new EventEmitter(),
+    waiters: new Map(),
+    pauseGate: null,
+    screenshots: new Map(),
+  });
   return run;
 }
 
 export function getRun(id: string): Run | undefined {
-  return runs.get(id);
+  return entries.get(id)?.run;
 }
 
 export function setPlan(id: string, groups: PlanGroup[]): void {
-  const run = runs.get(id);
+  const run = getRun(id);
   if (!run) return;
   let num = 0;
   run.steps = groups.flatMap((g) =>
@@ -54,8 +61,9 @@ export function setPlan(id: string, groups: PlanGroup[]): void {
 }
 
 export function pushEvent(id: string, event: RunEvent): void {
-  const run = runs.get(id);
-  if (!run) return;
+  const entry = entries.get(id);
+  if (!entry) return;
+  const run = entry.run;
   run.events.push(event);
 
   switch (event.kind) {
@@ -67,7 +75,12 @@ export function pushEvent(id: string, event: RunEvent): void {
       }
       break;
     case "done":
-      run.status = event.status ?? "passed";
+      // Итог прогона выводим из шагов, а не верим аргументу finish:
+      // любой fail-шаг => failed (модель не может «запассить» прогон с фейлами).
+      run.status = run.steps.some((s) => s.status === "fail")
+        ? "failed"
+        : (event.status ?? "passed");
+      event.status = run.status;
       run.summary = event.summary;
       run.pending = null;
       run.steps = run.steps.map((s) =>
@@ -97,15 +110,27 @@ export function pushEvent(id: string, event: RunEvent): void {
       break;
   }
 
-  emitters.get(id)?.emit("event", event);
+  entry.emitter.emit("event", event);
 }
 
 export function subscribe(id: string, listener: (e: RunEvent) => void): () => void {
-  const emitter = emitters.get(id);
+  const emitter = entries.get(id)?.emitter;
   if (!emitter) return () => {};
   emitter.on("event", listener);
   return () => emitter.off("event", listener);
 }
+
+// ── скриншоты ────────────────────────────────────────────────────────────────
+
+export function saveScreenshot(id: string, num: number, buf: Buffer): void {
+  entries.get(id)?.screenshots.set(num, buf);
+}
+
+export function getScreenshot(id: string, num: number): Buffer | undefined {
+  return entries.get(id)?.screenshots.get(num);
+}
+
+// ── вопросы (human-in-the-loop) ──────────────────────────────────────────────
 
 export function askQuestion(
   runId: string,
@@ -113,10 +138,13 @@ export function askQuestion(
   secret: boolean,
 ): Promise<string> {
   const questionId = crypto.randomBytes(4).toString("hex");
-  const question: PendingQuestion = { id: questionId, prompt, secret };
-  pushEvent(runId, { ts: Date.now(), kind: "question", question });
+  pushEvent(runId, {
+    ts: Date.now(),
+    kind: "question",
+    question: { id: questionId, prompt, secret } satisfies PendingQuestion,
+  });
   return new Promise<string>((resolve) => {
-    waiters.set(questionId, resolve);
+    entries.get(runId)?.waiters.set(questionId, resolve);
   });
 }
 
@@ -125,35 +153,38 @@ export function answerQuestion(
   questionId: string,
   answer: string,
 ): boolean {
-  const resolver = waiters.get(questionId);
-  if (!resolver) return false;
-  waiters.delete(questionId);
+  const entry = entries.get(runId);
+  const resolver = entry?.waiters.get(questionId);
+  if (!entry || !resolver) return false;
+  entry.waiters.delete(questionId);
   pushEvent(runId, { ts: Date.now(), kind: "answer", text: "(user answer received)" });
   resolver(answer);
   return true;
 }
 
+// ── пауза ────────────────────────────────────────────────────────────────────
+
 export function pauseRun(id: string): boolean {
-  const run = runs.get(id);
+  const run = getRun(id);
   if (!run || run.status !== "running") return false;
   pushEvent(id, { ts: Date.now(), kind: "paused" });
   return true;
 }
 
 export function resumeRun(id: string): boolean {
-  const run = runs.get(id);
-  if (!run || run.status !== "paused") return false;
-  const resolve = pauseGates.get(id);
-  pauseGates.delete(id);
+  const entry = entries.get(id);
+  if (!entry || entry.run.status !== "paused") return false;
+  const resolve = entry.pauseGate;
+  entry.pauseGate = null;
   pushEvent(id, { ts: Date.now(), kind: "resumed" });
   resolve?.();
   return true;
 }
 
 export function checkPause(id: string): Promise<void> {
-  const run = runs.get(id);
-  if (!run || run.status !== "paused") return Promise.resolve();
+  const entry = entries.get(id);
+  if (!entry || entry.run.status !== "paused") return Promise.resolve();
   return new Promise<void>((resolve) => {
-    pauseGates.set(id, resolve);
+    entry.pauseGate = resolve;
   });
 }

@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { createRun } from "@/lib/store";
 import { runAgent } from "@/lib/agent";
+import { providerConfigError, resolveProvider } from "@/lib/provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
-  if (!apiKey) {
-    return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  const cfgError = providerConfigError(resolveProvider());
+  if (cfgError) {
+    return NextResponse.json({ error: cfgError }, { status: 500 });
   }
 
   let body: { testCase?: unknown };
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
   const id = crypto.randomBytes(6).toString("hex");
   createRun(id, title);
 
-  runAgent(id, testCase, apiKey).catch((err) => {
+  runAgent(id, testCase).catch((err) => {
     console.error("agent crashed", err);
   });
 

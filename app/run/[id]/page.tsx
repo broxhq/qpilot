@@ -55,58 +55,21 @@ export default function RunPage({ params }: PageProps) {
     gotSnapshot.current = false;
     const es = new EventSource(`/api/run/${id}/stream`);
     es.onmessage = (msg) => {
-      const data = JSON.parse(msg.data);
-      if (data.kind === "snapshot") {
-        gotSnapshot.current = true;
-        setRun(data.run);
-        setEvents(data.run.events);
-        const terminal = data.run.status !== "running" && data.run.status !== "waiting";
-        if (terminal) {
-          const last = data.run.events.at(-1);
-          setFinishedAt(last?.ts ?? Date.now());
-        }
-        return;
-      }
-      setEvents((prev) => [...prev, data]);
-      if (data.kind === "plan" && data.steps) {
-        setRun((r) => (r ? { ...r, steps: data.steps } : r));
-      }
-      if (data.kind === "step" && data.step) {
-        setRun((r) => {
-          if (!r) return r;
-          const i = r.steps.findIndex((s) => s.num === data.step.num);
-          const steps =
-            i >= 0
-              ? r.steps.map((s, j) => (j === i ? { ...s, ...data.step } : s))
-              : [...r.steps, data.step];
-          return { ...r, steps };
-        });
-      }
-      if (data.kind === "question" && data.question) {
-        setRun((r) => r ? { ...r, status: "waiting", pending: data.question } : r);
-      }
-      if (data.kind === "answer") {
-        setRun((r) => (r ? { ...r, status: "running", pending: null } : r));
-      }
-      if (data.kind === "paused") {
-        setRun((r) => (r ? { ...r, status: "paused" } : r));
-      }
-      if (data.kind === "resumed") {
-        setRun((r) => (r ? { ...r, status: "running" } : r));
-      }
-      if (data.kind === "done" || data.kind === "error") {
-        setFinishedAt(data.ts ?? Date.now());
-        setRun((r) =>
-          r ? {
-            ...r,
-            status: data.status ?? (data.kind === "error" ? "error" : "passed"),
-            summary: data.summary ?? data.text,
-            pending: null,
-            steps: r.steps.map((s) =>
-              s.status === "queued" ? { ...s, status: "skipped" } : s,
-            ),
-          } : r,
-        );
+      // каждый кадр несёт актуальный Run целиком; первый — ещё и backlog событий
+      const data = JSON.parse(msg.data) as {
+        run: Omit<Run, "events">;
+        events?: RunEvent[];
+        event?: RunEvent;
+      };
+      gotSnapshot.current = true;
+      if (data.events) setEvents(data.events);
+      else if (data.event) setEvents((prev) => [...prev, data.event!]);
+      setRun({ ...data.run, events: [] });
+
+      const active = ["running", "waiting", "paused"].includes(data.run.status);
+      if (!active) {
+        const ts = data.event?.ts ?? data.events?.at(-1)?.ts ?? Date.now();
+        setFinishedAt((f) => f ?? ts);
       }
     };
     es.onerror = () => {
@@ -438,7 +401,10 @@ const ACTIVE_ACCENT = {
 };
 
 function isVisibleLog(e: RunEvent): boolean {
-  if (e.kind === "action" && (e.toolName === "report_step" || e.toolName === "finish"))
+  if (
+    e.kind === "action" &&
+    (e.toolName === "report_step" || e.toolName === "finish" || e.toolName === "set_plan")
+  )
     return false;
   if (e.kind === "observation") {
     const t = e.text ?? "";

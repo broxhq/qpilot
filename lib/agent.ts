@@ -1,10 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { askQuestion, checkPause, pushEvent, setPlan } from "./store";
+import { askQuestion, checkPause, pushEvent, saveScreenshot, setPlan } from "./store";
 import { TOOLS, snapshot } from "./tools";
 import type { PlanGroup } from "./types";
-
-const MODEL = "claude-haiku-4-5-20251001";
+import {
+  callOpenAICompatible,
+  resolveProvider,
+  type ProviderConfig,
+} from "./provider";
 
 const MAX_ITERATIONS = 80;
 const CONTEXT_BUDGET_CHARS = 40_000;
@@ -80,10 +83,9 @@ async function locate(
 
 const stripRefs = (t: string): string => t.replace(/\s*\[ref=e\d+\]/g, "");
 
-async function captureEvidence(page: Page): Promise<string | undefined> {
+async function captureEvidence(page: Page): Promise<Buffer | undefined> {
   try {
-    const buf = await page.screenshot({ type: "jpeg", quality: 55 });
-    return `data:image/jpeg;base64,${buf.toString("base64")}`;
+    return await page.screenshot({ type: "jpeg", quality: 55 });
   } catch {
     return undefined;
   }
@@ -200,6 +202,14 @@ async function executeTool(
 
   switch (name) {
     case "set_plan": {
+      // прощаем кривые форматы: steps строкой (с переносами) тоже принимаем
+      const toSteps = (v: unknown): string[] =>
+        Array.isArray(v)
+          ? v.map((s) => String(s).trim()).filter(Boolean)
+          : typeof v === "string"
+            ? v.split("\n").map((s) => s.trim()).filter(Boolean)
+            : [];
+
       let groups: PlanGroup[];
       if (Array.isArray(input.groups)) {
         groups = (input.groups as unknown[])
@@ -210,17 +220,22 @@ async function executeTool(
                 typeof obj.title === "string" && obj.title.trim()
                   ? obj.title.trim()
                   : undefined,
-              steps: Array.isArray(obj.steps)
-                ? obj.steps.map(String).filter(Boolean)
-                : [],
+              steps: toSteps(obj.steps),
             };
           })
           .filter((g) => g.steps.length > 0);
       } else {
-        const flat = Array.isArray(input.steps)
-          ? input.steps.map(String).filter(Boolean)
-          : [];
+        const flat = toSteps(input.steps);
         groups = flat.length ? [{ steps: flat }] : [];
+      }
+
+      // пустой план молча не принимаем — иначе UI не покажет шаги,
+      // а report_step будет дописывать их по одному
+      if (groups.length === 0) {
+        return {
+          content:
+            'Error: set_plan received no steps. Call set_plan again with groups=[{title:"TC-01...", steps:["step one", "step two", ...]}] — steps must be a non-empty array of strings.',
+        };
       }
 
       setPlan(runId, groups);
@@ -242,13 +257,14 @@ async function executeTool(
       });
       return { content: `OK: navigated to ${input.url}` };
 
-    case "snapshot":
-      return {
-        content: await snapshot(
-          page,
-          typeof input.near === "string" ? input.near : undefined,
-        ),
-      };
+    case "snapshot": {
+      const tree = await snapshot(
+        page,
+        typeof input.near === "string" ? input.near : undefined,
+      );
+      // в события/SSE полное дерево не пушим — UI его всё равно не показывает
+      return { content: tree, observation: `Page read (${tree.length} chars)` };
+    }
 
     case "click": {
       const loc = await locate(page, input);
@@ -347,11 +363,16 @@ async function executeTool(
 
     case "report_step": {
       const status = input.status as ReportStatus;
-      const screenshot =
-        status === "fail" || status === "warn"
-          ? await captureEvidence(page)
-          : undefined;
       const num = Number(input.num);
+      // JPEG уходит в store и отдаётся отдельным GET — в события/SSE не инлайнится
+      let screenshot: string | undefined;
+      if (status === "fail" || status === "warn") {
+        const buf = await captureEvidence(page);
+        if (buf) {
+          saveScreenshot(runId, num, buf);
+          screenshot = `/api/run/${runId}/shot/${num}`;
+        }
+      }
       const step = {
         num,
         description: stripRefs(String(input.description)).replace(/^\s*\d+[.)]\s*/, ""),
@@ -418,22 +439,29 @@ function compactHistory(
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function callModel(
-  client: Anthropic,
+  cfg: ProviderConfig,
+  client: Anthropic | null,
   messages: Anthropic.MessageParam[],
 ): Promise<Anthropic.Message> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      return await client.messages.create({
-        model: MODEL,
-        max_tokens: 2048,
-        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-        messages,
-        tools: TOOLS,
-        tool_choice: { type: "auto" },
-      });
+      if (cfg.kind === "anthropic") {
+        return await client!.messages.create({
+          model: cfg.model,
+          max_tokens: 2048,
+          system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+          messages,
+          tools: TOOLS,
+          tool_choice: { type: "auto" },
+        });
+      }
+      return await callOpenAICompatible(cfg, SYSTEM, messages, TOOLS);
     } catch (err) {
       lastErr = err;
+      // 4xx (кроме 429) ретраить бессмысленно: неверный ключ/модель/запрос
+      const status = (err as { status?: number }).status;
+      if (status && status >= 400 && status < 500 && status !== 429) break;
       await sleep(800 * (attempt + 1));
     }
   }
@@ -443,11 +471,14 @@ async function callModel(
 export async function runAgent(
   runId: string,
   testCase: string,
-  apiKey: string,
 ): Promise<void> {
   let browser: Browser | null = null;
 
-  const client = new Anthropic({ apiKey });
+  const cfg = resolveProvider();
+  const client =
+    cfg.kind === "anthropic"
+      ? new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
+      : null;
 
   try {
     browser = await chromium.launch({
@@ -476,7 +507,7 @@ export async function runAgent(
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       await checkPause(runId);
       const trimmed = compactHistory(messages);
-      const response = await callModel(client, trimmed);
+      const response = await callModel(cfg, client, trimmed);
 
       const textContent = response.content
         .flatMap((b) => (b.type === "text" ? [b.text] : []))
@@ -533,7 +564,8 @@ export async function runAgent(
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
 
-        const stepNum = ctx.step.current;
+        // set_plan — событие уровня прогона, к конкретному шагу не относится
+        const stepNum = name === "set_plan" ? undefined : ctx.step.current;
         pushEvent(runId, {
           ts: Date.now(),
           kind: "action",
