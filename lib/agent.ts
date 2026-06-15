@@ -471,6 +471,7 @@ async function callModel(
 export async function runAgent(
   runId: string,
   testCase: string,
+  headless = true,
 ): Promise<void> {
   let browser: Browser | null = null;
 
@@ -483,7 +484,7 @@ export async function runAgent(
   try {
     browser = await chromium.launch({
       channel: "chrome",
-      headless: process.env.HEADLESS !== "false",
+      headless,
     });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },

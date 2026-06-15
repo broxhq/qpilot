@@ -17,16 +17,21 @@ const g = globalThis as unknown as { __qa_entries?: Map<string, Entry> };
 const entries = (g.__qa_entries ??= new Map<string, Entry>());
 
 const ACTIVE = new Set(["running", "waiting", "paused"]);
+const MAX_HISTORY = 50;
 
-export function createRun(id: string, title: string): Run {
-  for (const [k, e] of entries) {
-    if (!ACTIVE.has(e.run.status)) entries.delete(k);
-  }
+export function createRun(id: string, title: string, testCase = ""): Run {
+  // keep at most MAX_HISTORY finished runs
+  const finished = [...entries.entries()].filter(([, e]) => !ACTIVE.has(e.run.status));
+  finished
+    .sort(([, a], [, b]) => a.run.createdAt - b.run.createdAt)
+    .slice(0, Math.max(0, finished.length - MAX_HISTORY + 1))
+    .forEach(([k]) => entries.delete(k));
   const run: Run = {
     id,
     createdAt: Date.now(),
     status: "running",
     title,
+    testCase,
     events: [],
     steps: [],
     pending: null,
@@ -43,6 +48,12 @@ export function createRun(id: string, title: string): Run {
 
 export function getRun(id: string): Run | undefined {
   return entries.get(id)?.run;
+}
+
+export function listRuns(): Pick<Run, "id" | "createdAt" | "status" | "title">[] {
+  return [...entries.values()]
+    .map(({ run }) => ({ id: run.id, createdAt: run.createdAt, status: run.status, title: run.title }))
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export function setPlan(id: string, groups: PlanGroup[]): void {

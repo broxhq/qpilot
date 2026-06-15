@@ -21,6 +21,7 @@ import type {
   RunEvent,
   StepResult,
 } from "@/lib/types";
+import { updateFavicon, resetFavicon } from "@/lib/favicon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,6 +111,18 @@ export default function RunPage({ params }: PageProps) {
   }, [isRunning]);
 
   useEffect(() => {
+    updateFavicon(status);
+    return () => { resetFavicon(); };
+  }, [status]);
+
+  useEffect(() => {
+    if (!run?.title) return;
+    const prev = document.title;
+    document.title = run.title;
+    return () => { document.title = prev; };
+  }, [run?.title]);
+
+  useEffect(() => {
     if (activeStepNum == null) return;
     document
       .getElementById(`step-${activeStepNum}`)
@@ -153,7 +166,7 @@ export default function RunPage({ params }: PageProps) {
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-8"
       >
         <ArrowLeft className="size-3.5" />
-        new run
+        Back
       </Link>
 
       {/* status header */}
@@ -253,6 +266,26 @@ export default function RunPage({ params }: PageProps) {
           </div>
           <div className="text-sm leading-relaxed text-foreground/80">{run.summary}</div>
         </div>
+      )}
+
+      {/* test case instruction */}
+      {run?.testCase && (
+        <Collapsible className="mt-3">
+          <div className="rounded-xl border border-white/7 bg-card/60 overflow-hidden">
+            <CollapsibleTrigger className="group w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
+                Test case
+              </span>
+              <ChevronRight className="size-3.5 text-muted-foreground/30 group-data-open:hidden" />
+              <ChevronDown className="size-3.5 text-muted-foreground/30 hidden group-data-open:inline" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <pre className="px-4 pb-4 text-[11.5px] font-mono leading-relaxed text-foreground/60 whitespace-pre-wrap break-words border-t border-white/5 pt-3">
+                {run.testCase}
+              </pre>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
       )}
 
       {/* star CTA — show once a run has finished (the "you just saw it work" moment) */}
