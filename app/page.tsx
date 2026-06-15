@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { Bot, FileText, ArrowRight } from "lucide-react";
+import { Bot, FileText, ArrowRight, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -24,10 +24,23 @@ Steps:
 export default function Home() {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result;
+      if (typeof content === "string") setText(content);
+    };
+    reader.readAsText(file, "utf-8");
+    e.target.value = "";
+  }
 
   async function onSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -118,6 +131,23 @@ export default function Home() {
           >
             <FileText className="size-4" />
             Example
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".md,text/markdown"
+            className="hidden"
+            onChange={onFileChange}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            onClick={() => fileInputRef.current?.click()}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Upload className="size-4" />
+            Upload .md
           </Button>
 
           {error && (
