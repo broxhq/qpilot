@@ -1,17 +1,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { askQuestion, checkPause, pushEvent, saveScreenshot, setPlan } from "./store";
-import { TOOLS, snapshot } from "./tools";
+import { askQuestion, checkPause, getRun, pushEvent, saveScreenshot, setPlan } from "./store";
+import { TOOLS, findAnchor, snapshot } from "./tools";
 import type { PlanGroup } from "./types";
 import {
   callOpenAICompatible,
+  parseRetryAfter,
   resolveProvider,
   type ProviderConfig,
 } from "./provider";
 
-const MAX_ITERATIONS = 80;
+// Hard cap is just a backstop against runaway loops (each iteration is a paid
+// model call). Real loops are caught far earlier by the no-progress guard: if no
+// new step is completed within MAX_NO_PROGRESS iterations, the agent is stuck.
+const MAX_ITERATIONS = 200;
+const MAX_NO_PROGRESS = 30;
 const CONTEXT_BUDGET_CHARS = 40_000;
 const KEEP_RECENT_TOOL_MSGS = 4;
+const MAX_RETRIES = 5;
+const MAX_BACKOFF_MS = 30_000;
 
 type ReportStatus = "pass" | "fail" | "warn";
 
@@ -21,8 +28,13 @@ Order:
 1. set_plan — first call. groups=[{title?,steps}], one group per TC. steps without leading numbers.
 2. navigate to the URL from the test case. Browser starts at about:blank — no page until you navigate.
 3. Preconditions (login, opening a section) — execute after navigate, do not include in plan, do not call report_step. If precondition fails — step 1 = fail, then finish immediately.
-4. Each step: snapshot if state is unknown → action → snapshot → report_step(num=sequential).
+4. Each step: act → read the snapshot returned BY that action → report_step(num=sequential).
 5. Each step exactly once. finish — after the last step.
+
+EFFICIENCY — you have a limited number of steps, do not waste them:
+- navigate/click/fill/select/hover/press/scroll/scroll_to/wait/dismiss ALREADY return a fresh snapshot in their result. Do NOT call snapshot after them — just read what they returned.
+- Call snapshot only for the FIRST page read, or to zoom into a block with near=.
+- Batch independent actions in ONE turn: e.g. emit several fill calls together to fill a form, then report. Fewer round-trips = more budget for real work.
 
 Statuses: pass | fail | warn.
 Critical fail (login, form open, navigate without loading): finish immediately, do not report the rest.
@@ -32,8 +44,9 @@ DO NOT HALLUCINATE:
 - evidence — verbatim quote from the snapshot.
 - No element → fail, do not invent.
 
-Elements: ref=[eN] from snapshot is required for click/fill/select/hover. Stale after page change — take a new snapshot.
+Elements: ref=[eN] is required for click/fill/select/hover, taken from the MOST RECENT snapshot (including the one your last action returned). Older refs are stale.
 For <select> dropdowns use select, not click.
+If a click fails with "intercepts pointer events", an open overlay (dropdown/popover) is covering the target: call dismiss to click an empty corner (closes it), then snapshot and retry. Custom dropdowns usually ignore Escape.
 
 Finding elements (IMPORTANT): the snapshot is the WHOLE loaded page, not just the visible part. Scrolling does NOT add elements to it — if a control exists it's already in the tree. So DO NOT scroll repeatedly to "find" a button.
 - To act on a control in a named section (e.g. "Show all" in the "Top ads" block), call snapshot with near='Top ads' — it returns just that block's tree with refs, never truncated, and disambiguates duplicate labels (there can be many "Show all"). Then click the ref. This is the right tool for "do X in section Y".
@@ -82,6 +95,34 @@ async function locate(
 }
 
 const stripRefs = (t: string): string => t.replace(/\s*\[ref=e\d+\]/g, "");
+
+// Wraps click/fill: when an overlay intercepts the click ("intercepts pointer
+// events"), return a short directive instead of Playwright's wall of log text —
+// otherwise the model keeps repeating the same failing click.
+// Return a fresh snapshot in the SAME result as the action — this removes the
+// separate snapshot call after every action and roughly halves iterations per
+// step. Only the short observation goes to events/SSE; the tree goes to the model.
+async function actionResult(page: Page, msg: string): Promise<ToolResult> {
+  const tree = await snapshot(page).catch(() => "");
+  return { content: tree ? `${msg}\n\n${tree}` : msg, observation: msg };
+}
+
+async function clickWithHint(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/intercepts pointer events/i.test(msg)) {
+      const overlay = msg.match(/from <[^>]*class="([^"]+)"/)?.[1]?.split(/\s+/)[0];
+      throw new Error(
+        `Click blocked: an open overlay${overlay ? ` (${overlay})` : ""} is covering the target. ` +
+          `Close it first — call dismiss (clicks an empty corner) or click the overlay's own trigger again, ` +
+          `then take a fresh snapshot. Escape often doesn't work on custom dropdowns.`,
+      );
+    }
+    throw err;
+  }
+}
 
 async function captureEvidence(page: Page): Promise<Buffer | undefined> {
   try {
@@ -202,7 +243,7 @@ async function executeTool(
 
   switch (name) {
     case "set_plan": {
-      // прощаем кривые форматы: steps строкой (с переносами) тоже принимаем
+      // tolerate sloppy formats: accept steps as a newline-separated string too
       const toSteps = (v: unknown): string[] =>
         Array.isArray(v)
           ? v.map((s) => String(s).trim()).filter(Boolean)
@@ -229,8 +270,8 @@ async function executeTool(
         groups = flat.length ? [{ steps: flat }] : [];
       }
 
-      // пустой план молча не принимаем — иначе UI не покажет шаги,
-      // а report_step будет дописывать их по одному
+      // reject an empty plan loudly — otherwise the UI shows no steps and
+      // report_step would append them one by one
       if (groups.length === 0) {
         return {
           content:
@@ -255,27 +296,27 @@ async function executeTool(
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
-      return { content: `OK: navigated to ${input.url}` };
+      return actionResult(page, `OK: navigated to ${input.url}`);
 
     case "snapshot": {
       const tree = await snapshot(
         page,
         typeof input.near === "string" ? input.near : undefined,
       );
-      // в события/SSE полное дерево не пушим — UI его всё равно не показывает
+      // don't push the full tree to events/SSE — the UI doesn't render it anyway
       return { content: tree, observation: `Page read (${tree.length} chars)` };
     }
 
     case "click": {
       const loc = await locate(page, input);
-      await loc.click({ timeout: 5000 });
-      return { content: `OK: clicked ${input.name ?? input.ref}` };
+      await clickWithHint(() => loc.click({ timeout: 5000 }));
+      return actionResult(page, `OK: clicked ${input.name ?? input.ref}`);
     }
 
     case "fill": {
       const loc = await locate(page, input);
-      await loc.fill(String(input.value), { timeout: 5000 });
-      return { content: `OK: filled "${input.value}" into ${input.name ?? input.ref}` };
+      await clickWithHint(() => loc.fill(String(input.value), { timeout: 5000 }));
+      return actionResult(page, `OK: filled "${input.value}" into ${input.name ?? input.ref}`);
     }
 
     case "select": {
@@ -287,13 +328,13 @@ async function executeTool(
       } catch {
         await loc.selectOption({ label: val }, { timeout: 5000 });
       }
-      return { content: `OK: selected "${val}" in ${input.name ?? input.ref}` };
+      return actionResult(page, `OK: selected "${val}" in ${input.name ?? input.ref}`);
     }
 
     case "hover": {
       const loc = await locate(page, input);
       await loc.hover({ timeout: 5000 });
-      return { content: `OK: hovered ${input.name ?? input.ref}` };
+      return actionResult(page, `OK: hovered ${input.name ?? input.ref}`);
     }
 
     case "scroll_to": {
@@ -308,18 +349,19 @@ async function executeTool(
           return { content: `ref ${ref} not found — take a fresh snapshot` };
         }
       } else if (text) {
-        loc = page.getByText(text, { exact: false }).first();
-        label = `element containing "${text}"`;
-        if ((await loc.count()) === 0) {
+        const anchor = await findAnchor(page, text);
+        if (!anchor) {
           return { content: `Not found on page: "${text}" — try a shorter/unique substring, or it may not be loaded yet (scroll the page first to trigger lazy loading)` };
         }
+        loc = anchor;
+        label = `element containing "${text}"`;
       } else {
         return { content: "Provide either text or ref to scroll to." };
       }
       // scrollIntoViewIfNeeded walks up and scrolls every scrollable ancestor
       // (page, inner divs, horizontal) as needed to reveal the element.
       await loc.scrollIntoViewIfNeeded({ timeout: 5000 });
-      return { content: `OK: scrolled to ${label}. Take a snapshot to see it and get a fresh ref.` };
+      return actionResult(page, `OK: scrolled to ${label}`);
     }
 
     case "scroll": {
@@ -338,17 +380,23 @@ async function executeTool(
       } else {
         res = await page.evaluate(scrollNearest, { x, y });
       }
-      return { content: describeScroll(res, x, y) };
+      return actionResult(page, describeScroll(res, x, y));
     }
 
     case "press":
       await page.keyboard.press(String(input.key));
-      return { content: `OK: pressed ${input.key}` };
+      return actionResult(page, `OK: pressed ${input.key}`);
+
+    case "dismiss":
+      // click an empty viewport corner = click-outside: closes dropdowns/popovers
+      await page.mouse.click(5, 5);
+      await page.waitForTimeout(150);
+      return actionResult(page, "OK: clicked empty area to close any open overlay");
 
     case "wait": {
       const ms = Math.min(Number(input.ms) || 0, 5000);
       await page.waitForTimeout(ms);
-      return { content: `OK: waited ${ms}ms` };
+      return actionResult(page, `OK: waited ${ms}ms`);
     }
 
     case "ask_user": {
@@ -364,7 +412,7 @@ async function executeTool(
     case "report_step": {
       const status = input.status as ReportStatus;
       const num = Number(input.num);
-      // JPEG уходит в store и отдаётся отдельным GET — в события/SSE не инлайнится
+      // JPEG goes to the store and is served via a separate GET — never inlined in events/SSE
       let screenshot: string | undefined;
       if (status === "fail" || status === "warn") {
         const buf = await captureEvidence(page);
@@ -438,13 +486,27 @@ function compactHistory(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Backoff before a retry. Prefer the server's Retry-After (present on 429 from
+// most gateways); otherwise exponential 1→2→4→8s + jitter, capped.
+// The Anthropic SDK exposes headers on err.headers; the custom path on err.retryAfterMs.
+function retryDelayMs(err: unknown, attempt: number): number {
+  const e = err as { retryAfterMs?: number; headers?: { get?: (k: string) => string | null } };
+  const hinted =
+    e?.retryAfterMs ?? parseRetryAfter(e?.headers?.get?.("retry-after") ?? null);
+  if (typeof hinted === "number" && hinted > 0) {
+    return Math.min(hinted, MAX_BACKOFF_MS);
+  }
+  const backoff = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+  return backoff + Math.floor(Math.random() * 500);
+}
+
 async function callModel(
   cfg: ProviderConfig,
   client: Anthropic | null,
   messages: Anthropic.MessageParam[],
 ): Promise<Anthropic.Message> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       if (cfg.kind === "anthropic") {
         return await client!.messages.create({
@@ -459,10 +521,11 @@ async function callModel(
       return await callOpenAICompatible(cfg, SYSTEM, messages, TOOLS);
     } catch (err) {
       lastErr = err;
-      // 4xx (кроме 429) ретраить бессмысленно: неверный ключ/модель/запрос
       const status = (err as { status?: number }).status;
+      // retrying 4xx (except 429) is pointless: bad key/model/request
       if (status && status >= 400 && status < 500 && status !== 429) break;
-      await sleep(800 * (attempt + 1));
+      if (attempt === MAX_RETRIES - 1) break;
+      await sleep(retryDelayMs(err, attempt));
     }
   }
   throw lastErr;
@@ -503,6 +566,10 @@ export async function runAgent(
     ];
 
     let emptyTurns = 0;
+    // progress = a new step completed (report_step advances ctx.step.current);
+    // if it doesn't move for MAX_NO_PROGRESS iterations, the agent is stuck.
+    let lastStep = 0;
+    let lastProgressIter = 0;
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       await checkPause(runId);
@@ -564,7 +631,7 @@ export async function runAgent(
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
 
-        // set_plan — событие уровня прогона, к конкретному шагу не относится
+        // set_plan is a run-level event, not tied to any specific step
         const stepNum = name === "set_plan" ? undefined : ctx.step.current;
         pushEvent(runId, {
           ts: Date.now(),
@@ -610,6 +677,34 @@ export async function runAgent(
       }
 
       if (finished) break;
+
+      // no-progress guard: catches loops (acting but never completing a step)
+      // earlier and cheaper than the hard cap.
+      if (ctx.step.current > lastStep) {
+        lastStep = ctx.step.current;
+        lastProgressIter = iter;
+      } else if (iter - lastProgressIter >= MAX_NO_PROGRESS) {
+        pushEvent(runId, {
+          ts: Date.now(),
+          kind: "done",
+          status: "failed",
+          summary: `Stuck: no step completed in ${MAX_NO_PROGRESS} steps — the agent is likely looping (e.g. a blocked action it can't resolve).`,
+        });
+        break;
+      }
+    }
+
+    // Loop exited by exhausting iterations (not via finish) — close the run
+    // explicitly, else status stays running and logs hang in pending though the
+    // browser is gone.
+    const run = getRun(runId);
+    if (run && (run.status === "running" || run.status === "waiting" || run.status === "paused")) {
+      pushEvent(runId, {
+        ts: Date.now(),
+        kind: "done",
+        status: "failed",
+        summary: `Reached the ${MAX_ITERATIONS}-step limit before calling finish — the run is incomplete.`,
+      });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

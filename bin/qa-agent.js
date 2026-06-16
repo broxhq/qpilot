@@ -22,7 +22,7 @@ const args = process.argv.slice(2);
 let VISIBLE = args.includes("--visible") || args.includes("-v");
 const WANTS_SETUP =
   args[0] === "config" || args[0] === "setup" || args.includes("--config");
-// меню/промпты — только в реальном терминале; в скриптах стартуем молча
+// menu/prompts only in a real terminal; in scripts start silently
 const INTERACTIVE = Boolean(process.stdout.isTTY && process.stdin.isTTY);
 
 function findFreePort(port) {
@@ -76,7 +76,7 @@ function saveConfig(cfg) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 }
 
-/** Фолбэк: Anthropic-ключ из env / .env.local (обратная совместимость). */
+/** Fallback: Anthropic key from env / .env.local (backwards compatibility). */
 function envConfig(fileEnv) {
   const apiKey = process.env.ANTHROPIC_API_KEY || fileEnv.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
@@ -87,7 +87,7 @@ function envConfig(fileEnv) {
   };
 }
 
-/** config → env-переменные, которые понимает сервер (lib/provider.ts). */
+/** config → env vars the server understands (lib/provider.ts). */
 function configToEnv(cfg) {
   if (cfg.provider === "custom") {
     return {
@@ -133,7 +133,7 @@ function configSummary(cfg, source) {
   return lines.join("\n");
 }
 
-// ── интерактив (@clack/prompts, ESM → dynamic import) ───────────────────────
+// ── interactive (@clack/prompts, ESM → dynamic import) ──────────────────────
 
 const required = (v) => (v && v.trim() ? undefined : "Required");
 
@@ -231,7 +231,7 @@ async function runSetup(p) {
   return cfg;
 }
 
-/** Карточка конфига + меню: Start / Start visible / Change / Exit. */
+/** Config card + menu: Start / Start visible / Change / Exit. */
 async function startMenu(p, cfg, source) {
   for (;;) {
     p.note(configSummary(cfg, source), "Provider");
@@ -306,7 +306,7 @@ async function main() {
 
   let cfg;
   if (!INTERACTIVE) {
-    // скрипты/CI: без меню — берём сохранённый конфиг или env, иначе ошибка
+    // scripts/CI: no menu — use saved config or env, else error
     cfg = loadConfig() || envConfig(fileEnv);
     if (WANTS_SETUP || !cfg) {
       console.error(

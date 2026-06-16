@@ -4,8 +4,8 @@ import { getScreenshot } from "@/lib/store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Скриншоты шагов (fail/warn) лежат в store как JPEG-буферы и отдаются
-// здесь по URL из StepResult.screenshot — в SSE-события они не инлайнятся.
+// Step screenshots (fail/warn) live in the store as JPEG buffers and are served
+// here via the URL in StepResult.screenshot — never inlined into SSE events.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string; num: string }> },

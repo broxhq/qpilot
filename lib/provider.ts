@@ -1,14 +1,14 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
-// Провайдер модели. Два бэкенда:
-//  - anthropic: нативный Anthropic SDK (как было исторически).
-//  - openai: любой OpenAI-совместимый endpoint (Qwen, vLLM, Ollama, корп-гейтвей,
-//    OpenRouter, сам OpenAI). Один адаптер покрывает весь этот зоопарк.
+// Model provider. Two backends:
+//  - anthropic: native Anthropic SDK.
+//  - openai: any OpenAI-compatible endpoint (Qwen, vLLM, Ollama, corp gateway,
+//    OpenRouter, OpenAI itself). One adapter covers them all.
 //
-// Конфиг приходит из env (их выставляет CLI bin/qa-agent.js по выбору юзера).
+// Config comes from env, set by the CLI (bin/qa-agent.js) from the user's choice.
 
 export type ProviderConfig =
-  // baseURL у anthropic опционален — для корп-прокси/гейтвеев перед Claude
+  // baseURL is optional for anthropic — for corp proxies/gateways in front of Claude
   | { kind: "anthropic"; apiKey: string; model: string; baseURL?: string }
   | { kind: "openai"; baseURL: string; apiKey: string; model: string };
 
@@ -16,7 +16,7 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
 
 const MAX_TOKENS = 2048;
 
-/** Собрать конфиг провайдера из переменных окружения. */
+/** Build the provider config from environment variables. */
 export function resolveProvider(): ProviderConfig {
   const provider = (process.env.QPILOT_PROVIDER || "anthropic").toLowerCase();
 
@@ -37,7 +37,20 @@ export function resolveProvider(): ProviderConfig {
   };
 }
 
-/** Понятное сообщение, если конфиг неполный (для 500 в /api/run). null = всё ок. */
+/**
+ * Retry-After header → milliseconds. Accepts both a number of seconds ("5") and
+ * an HTTP date ("Wed, 21 Oct 2025 07:28:00 GMT"). undefined if empty/unparsable.
+ */
+export function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const secs = Number(value);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return undefined;
+}
+
+/** Human-readable message if the config is incomplete (for the 500 in /api/run). null = ok. */
 export function providerConfigError(cfg: ProviderConfig): string | null {
   if (cfg.kind === "anthropic") {
     return cfg.apiKey ? null : "ANTHROPIC_API_KEY is not configured. Run: qpilot config";
@@ -48,10 +61,10 @@ export function providerConfigError(cfg: ProviderConfig): string | null {
   return null;
 }
 
-// ── OpenAI-совместимый путь ────────────────────────────────────────────────
-// Внутренняя история диалога всегда в формате Anthropic. Здесь конвертируем
-// её (и тулы) в OpenAI Chat Completions, а ответ нормализуем обратно в форму
-// Anthropic.Message, чтобы цикл агента не заметил разницы.
+// ── OpenAI-compatible path ───────────────────────────────────────────────────
+// The internal history is always in Anthropic format. Here we convert it (and the
+// tools) to OpenAI Chat Completions, then normalize the response back into an
+// Anthropic.Message so the agent loop never notices the difference.
 
 interface OpenAIToolCall {
   id: string;
@@ -87,7 +100,7 @@ function toOpenAIMessages(
     }
 
     if (m.role === "user") {
-      // блок(и): tool_result и/или text
+      // block(s): tool_result and/or text
       for (const b of m.content) {
         if (b.type === "tool_result") {
           const c =
@@ -123,7 +136,7 @@ function toOpenAIMessages(
   return out;
 }
 
-/** Нормализованный ответ — структурно совместим с тем, что читает цикл агента. */
+/** Normalized response — structurally compatible with what the agent loop reads. */
 function fromOpenAI(data: unknown): Anthropic.Message {
   const choice = (data as { choices?: unknown[] })?.choices?.[0] as
     | { message?: { content?: string; tool_calls?: OpenAIToolCall[] }; finish_reason?: string }
@@ -133,7 +146,7 @@ function fromOpenAI(data: unknown): Anthropic.Message {
   const content: Array<Record<string, unknown>> = [];
   if (msg.content) content.push({ type: "text", text: msg.content });
   for (const tc of msg.tool_calls ?? []) {
-    // arguments обычно JSON-строка, но часть гейтвеев отдаёт сразу объект
+    // arguments is usually a JSON string, but some gateways return an object directly
     const raw: unknown = tc.function.arguments;
     let input: unknown = {};
     if (typeof raw === "string") {
@@ -179,8 +192,10 @@ export async function callOpenAICompatible(
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    // Retry-After (seconds or HTTP date) — the gateway's hint on how long to wait on 429
     throw Object.assign(new Error(`Model API ${res.status}: ${body.slice(0, 300)}`), {
       status: res.status,
+      retryAfterMs: parseRetryAfter(res.headers.get("retry-after")),
     });
   }
 

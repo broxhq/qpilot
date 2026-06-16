@@ -1,5 +1,21 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
+
+// Resolve a text anchor for near=/scroll_to. Headings and exact matches win over
+// a substring in prose: otherwise near="Top paid keywords" grabs the first
+// paragraph that merely mentions the phrase instead of the actual section.
+export async function findAnchor(page: Page, wanted: string): Promise<Locator | null> {
+  const candidates: Locator[] = [
+    page.getByRole("heading", { name: wanted, exact: true }),
+    page.getByRole("heading", { name: wanted }),
+    page.getByText(wanted, { exact: true }),
+    page.getByText(wanted, { exact: false }),
+  ];
+  for (const c of candidates) {
+    if ((await c.count().catch(() => 0)) > 0) return c.first();
+  }
+  return null;
+}
 
 export const TOOLS: Anthropic.Tool[] = [
   {
@@ -88,6 +104,12 @@ export const TOOLS: Anthropic.Tool[] = [
       properties: { key: { type: "string" } },
       required: ["key"],
     },
+  },
+  {
+    name: "dismiss",
+    description:
+      "Close an open overlay (dropdown, popover, tooltip, multi-select panel) by clicking an empty spot in the page corner — i.e. a click OUTSIDE the overlay. Use this when a click fails with 'intercepts pointer events' (an overlay is covering your target) and Escape doesn't help. After calling, take a fresh snapshot.",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "wait",
@@ -217,8 +239,8 @@ export async function snapshot(page: Page, near?: string): Promise<string> {
   let scopeNote = "";
   const wanted = near?.trim();
   if (wanted) {
-    const anchor = page.getByText(wanted, { exact: false }).first();
-    if ((await anchor.count()) > 0) {
+    const anchor = await findAnchor(page, wanted);
+    if (anchor) {
       // Climb from the matched text to a meaningful container (first ancestor
       // with enough descendants), tag it, and snapshot just that subtree.
       const tagged = await anchor

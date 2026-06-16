@@ -2,9 +2,9 @@ import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { PendingQuestion, PlanGroup, Run, RunEvent } from "./types";
 
-// Всё состояние одного прогона живёт в одной записи: сам Run, его emitter,
-// ожидающие ответа вопросы, pause-gate и скриншоты (JPEG-буферы, отдаются
-// через GET /api/run/[id]/shot/[num] — в события не инлайнятся).
+// All state for one run lives in a single entry: the Run, its emitter, pending
+// questions, the pause gate, and screenshots (JPEG buffers served via
+// GET /api/run/[id]/shot/[num] — never inlined into events).
 interface Entry {
   run: Run;
   emitter: EventEmitter;
@@ -75,8 +75,8 @@ export function pushEvent(id: string, event: RunEvent): void {
       }
       break;
     case "done":
-      // Итог прогона выводим из шагов, а не верим аргументу finish:
-      // любой fail-шаг => failed (модель не может «запассить» прогон с фейлами).
+      // Derive the verdict from steps, don't trust finish's argument:
+      // any failed step => failed (the model can't "pass" a run with failures).
       run.status = run.steps.some((s) => s.status === "fail")
         ? "failed"
         : (event.status ?? "passed");
@@ -120,7 +120,7 @@ export function subscribe(id: string, listener: (e: RunEvent) => void): () => vo
   return () => emitter.off("event", listener);
 }
 
-// ── скриншоты ────────────────────────────────────────────────────────────────
+// ── screenshots ──────────────────────────────────────────────────────────────
 
 export function saveScreenshot(id: string, num: number, buf: Buffer): void {
   entries.get(id)?.screenshots.set(num, buf);
@@ -130,7 +130,7 @@ export function getScreenshot(id: string, num: number): Buffer | undefined {
   return entries.get(id)?.screenshots.get(num);
 }
 
-// ── вопросы (human-in-the-loop) ──────────────────────────────────────────────
+// ── questions (human-in-the-loop) ────────────────────────────────────────────
 
 export function askQuestion(
   runId: string,
@@ -162,7 +162,7 @@ export function answerQuestion(
   return true;
 }
 
-// ── пауза ────────────────────────────────────────────────────────────────────
+// ── pause ────────────────────────────────────────────────────────────────────
 
 export function pauseRun(id: string): boolean {
   const run = getRun(id);

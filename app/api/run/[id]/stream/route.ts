@@ -7,9 +7,9 @@ export const dynamic = "force-dynamic";
 
 const ACTIVE = new Set(["running", "waiting", "paused"]);
 
-// Протокол: каждый кадр несёт АКТУАЛЬНЫЙ Run целиком (без массива events —
-// он тяжёлый и нужен только логу). Первый кадр дополнительно несёт backlog
-// событий, последующие — одно новое событие. Клиент просто делает setRun().
+// Protocol: every frame carries the CURRENT Run in full (minus the events array,
+// which is heavy and only needed for the log). The first frame also carries the
+// event backlog; later frames carry one new event. The client just calls setRun().
 function frame(run: Run, extra: Record<string, unknown>): string {
   const { events: _events, ...lite } = run;
   return `data: ${JSON.stringify({ run: lite, ...extra })}\n\n`;
@@ -35,13 +35,13 @@ export async function GET(
         try {
           controller.close();
         } catch {
-          // уже закрыт (клиент отвалился) — не страшно
+          // already closed (client disconnected) — fine
         }
       };
 
       controller.enqueue(encoder.encode(frame(run, { events: run.events })));
       if (!ACTIVE.has(run.status)) {
-        // прогон уже завершён — отдали снапшот и закрылись
+        // run already finished — sent the snapshot and closed
         setTimeout(close, 200);
         return;
       }
