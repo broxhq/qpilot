@@ -223,7 +223,7 @@ export const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-const MAX_SNAPSHOT_CHARS = 8000;
+const MAX_SNAPSHOT_CHARS = 16000;
 
 export async function snapshot(page: Page, near?: string): Promise<string> {
   const url = page.url();
@@ -241,15 +241,19 @@ export async function snapshot(page: Page, near?: string): Promise<string> {
   if (wanted) {
     const anchor = await findAnchor(page, wanted);
     if (anchor) {
-      // Climb from the matched text to a meaningful container (first ancestor
-      // with enough descendants), tag it, and snapshot just that subtree.
+      // Climb from the matched element to a container with enough context, but
+      // stop BEFORE a huge ancestor — otherwise scoping a leaf (e.g. a submit
+      // button at the end of a long form) lands on <body> and the target gets
+      // truncated away. Bounding descendant count keeps the target in the tree.
       const tagged = await anchor
         .evaluate((el, max) => {
           let n: Element | null = el;
           let best: Element = el;
           for (let i = 0; i < max && n; i++) {
+            const count = n.querySelectorAll("*").length;
+            if (count > 300) break; // ancestor too large — keep the previous one
             best = n;
-            if (n.querySelectorAll("*").length >= 25) break;
+            if (count >= 25) break; // enough surrounding context
             n = n.parentElement;
           }
           best.setAttribute("data-qa-scope", "1");
@@ -284,7 +288,7 @@ export async function snapshot(page: Page, near?: string): Promise<string> {
   if (tree.length > MAX_SNAPSHOT_CHARS) {
     tree =
       tree.slice(0, MAX_SNAPSHOT_CHARS) +
-      "\n... (truncated — scrolling won't help; use snapshot with `near` to zoom into the section you need)";
+      "\n... (truncated. Elements past this point are NOT shown — including submit/footer buttons at the bottom of long forms. To act on something not listed here, use snapshot with `near='<text near it>'`, or scroll_to('<button text>') to bring it into a fresh snapshot. Scrolling alone won't reveal it.)";
   }
 
   return [

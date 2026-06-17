@@ -11,12 +11,15 @@ import {
 } from "./provider";
 
 // Hard cap is just a backstop against runaway loops (each iteration is a paid
-// model call). Real loops are caught far earlier by the no-progress guard: if no
-// new step is completed within MAX_NO_PROGRESS iterations, the agent is stuck.
+// model call). Real loops are caught earlier by the repetition guard: if the last
+// STUCK_WINDOW actions since the last progress have <= STUCK_DISTINCT unique
+// signatures, the agent is repeating itself (e.g. a blocked action it can't
+// resolve). A legit complex step does many DIFFERENT actions, so it isn't flagged.
 const MAX_ITERATIONS = 200;
-const MAX_NO_PROGRESS = 30;
-const CONTEXT_BUDGET_CHARS = 40_000;
-const KEEP_RECENT_TOOL_MSGS = 4;
+const STUCK_WINDOW = 24;
+const STUCK_DISTINCT = 4;
+const CONTEXT_BUDGET_CHARS = 64_000;
+const KEEP_RECENT_TOOL_MSGS = 3;
 const MAX_RETRIES = 5;
 const MAX_BACKOFF_MS = 30_000;
 
@@ -105,6 +108,16 @@ const stripRefs = (t: string): string => t.replace(/\s*\[ref=e\d+\]/g, "");
 async function actionResult(page: Page, msg: string): Promise<ToolResult> {
   const tree = await snapshot(page).catch(() => "");
   return { content: tree ? `${msg}\n\n${tree}` : msg, observation: msg };
+}
+
+// Signature of a tool call for loop detection: tool + its semantic target +
+// value. Different fields/values/labels => different signatures, so a varied
+// (legit) step looks diverse; a repeated action collapses to one signature.
+function actionSig(name: string, input: Record<string, unknown>): string {
+  const target =
+    input.name ?? input.near ?? input.text ?? input.ref ?? input.url ?? "";
+  const value = input.value ?? input.key ?? "";
+  return `${name}:${target}:${value}`;
 }
 
 async function clickWithHint(action: () => Promise<void>): Promise<void> {
@@ -550,6 +563,9 @@ export async function runAgent(
     });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
+      // Dev/staging/corp environments routinely use self-signed or internal-CA
+      // certs; skip the browser's SSL warning page so navigate just works.
+      ignoreHTTPSErrors: true,
     });
     const page = await context.newPage();
 
@@ -566,10 +582,11 @@ export async function runAgent(
     ];
 
     let emptyTurns = 0;
-    // progress = a new step completed (report_step advances ctx.step.current);
-    // if it doesn't move for MAX_NO_PROGRESS iterations, the agent is stuck.
-    let lastStep = 0;
-    let lastProgressIter = 0;
+    // Loop detector: action signatures since the last progress milestone
+    // (completed step / navigate / user answer). Repetition with low diversity
+    // means the agent is stuck.
+    let lastStep = ctx.step.current;
+    let sigsSinceProgress: string[] = [];
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       await checkPause(runId);
@@ -625,11 +642,17 @@ export async function runAgent(
       emptyTurns = 0;
 
       let finished = false;
+      // milestones that count as progress besides report_step: a successful
+      // navigate or a user answer. The long login/precondition phase (cert,
+      // OTP, redirects) makes real headway without closing a step yet.
+      let progressedThisTurn = false;
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const b of toolUseBlocks) {
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
+
+        sigsSinceProgress.push(actionSig(name, input));
 
         // set_plan is a run-level event, not tied to any specific step
         const stepNum = name === "set_plan" ? undefined : ctx.step.current;
@@ -655,6 +678,7 @@ export async function runAgent(
             stepNum,
           });
           if (ret.finished) finished = true;
+          if (name === "navigate" || name === "ask_user") progressedThisTurn = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           toolResults.push({
@@ -678,17 +702,21 @@ export async function runAgent(
 
       if (finished) break;
 
-      // no-progress guard: catches loops (acting but never completing a step)
-      // earlier and cheaper than the hard cap.
-      if (ctx.step.current > lastStep) {
+      // Repetition guard: progress (a completed step / navigate / user answer)
+      // clears the buffer. Otherwise, if many actions pile up with very few
+      // unique signatures, the agent is repeating itself — stop.
+      if (ctx.step.current > lastStep || progressedThisTurn) {
         lastStep = ctx.step.current;
-        lastProgressIter = iter;
-      } else if (iter - lastProgressIter >= MAX_NO_PROGRESS) {
+        sigsSinceProgress = [];
+      } else if (
+        sigsSinceProgress.length >= STUCK_WINDOW &&
+        new Set(sigsSinceProgress).size <= STUCK_DISTINCT
+      ) {
         pushEvent(runId, {
           ts: Date.now(),
           kind: "done",
           status: "failed",
-          summary: `Stuck: no step completed in ${MAX_NO_PROGRESS} steps — the agent is likely looping (e.g. a blocked action it can't resolve).`,
+          summary: `Stuck: repeating the same few actions without progress — the agent is likely looping on a blocked action it can't resolve.`,
         });
         break;
       }
