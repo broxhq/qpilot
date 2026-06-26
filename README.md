@@ -79,15 +79,16 @@ The key is never stored except in `~/.qpilot/config.json` when you run setup.
 
 ## Options
 
-| Command / flag | Description |
+| Command | Description |
 |------|-------------|
 | `qpilot config` | Re-run provider setup (Anthropic or custom model) |
-| `--visible` | Show the Chrome window while the agent runs (also available in the start menu) |
 
 ```bash
-npx qpilot --visible
 npx qpilot config
 ```
+
+Browser visibility is a per-run choice in the UI, not a CLI flag: hit **Run** to
+stay headless, or **Run with preview** to watch Chrome click through the page.
 
 ---
 
@@ -116,8 +117,18 @@ You can paste multiple test cases at once — the agent runs them in order.
 
 ---
 
+## Running a folder of test cases
+
+Click **Choose folder** to point qpilot at a directory of `.md` files (or **Upload
+.md** for a single file). Check the ones you want, then **Run** the batch — each
+file runs one after another with live status and timing, and you can **Stop**
+mid-batch. Finished runs (including past batches) show up under **Recent runs**
+on the home page.
+
+---
+
 ## Notes
 
 - API key is stored only in `~/.qpilot/config.json` (file mode `600`) — never sent anywhere except your chosen model provider
-- Runs are in-memory; restarting clears them
+- Runs are in-memory and capped at the last 50 — restarting the server clears all of them
 - Powered by [Claude](https://anthropic.com) + [Playwright](https://playwright.dev)
