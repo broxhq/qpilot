@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   Bot, FileText, ArrowRight, Upload, Folder, X,
   Check, CircleAlert, Clock, Loader2, Square, CheckSquare,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +19,7 @@ type MdFile = { name: string; file: File };
 type BatchItem = { file: MdFile; id: string | null; status: "queued" | "skipped" | RunStatus; startedAt?: number; finishedAt?: number };
 
 const ACTIVE = new Set(["running", "waiting", "paused"]);
+const TEXTAREA_COLLAPSED_MAX = 360; // px — close to the default box height
 
 const EXAMPLE = `TC-001 — Login and add item to cart
 URL: https://www.saucedemo.com/
@@ -50,11 +52,14 @@ export default function Home() {
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [text, setText] = useState(_text);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
+  const [textExpanded, setTextExpanded] = useState(false);
+  const [textOverflowing, setTextOverflowing] = useState(false);
   const [mdFiles, setMdFiles] = useState<MdFile[]>(_mdFiles);
   const [selectedFile, setSelectedFile] = useState<string | null>(_selectedFile);
   const [history, setHistory] = useState<RunSummary[]>([]);
@@ -73,6 +78,13 @@ export default function Home() {
   useEffect(() => {
     fetch("/api/runs").then(r => r.ok ? r.json() : []).then(setHistory).catch(() => {});
   }, []);
+
+  // collapse the textarea once content grows past TEXTAREA_COLLAPSED_MAX, with a manual expand/collapse toggle
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    setTextOverflowing(el.scrollHeight > TEXTAREA_COLLAPSED_MAX + 4);
+  }, [text]);
 
   // sync batch state from module-level vars when re-mounting mid-batch
   useEffect(() => {
@@ -260,6 +272,11 @@ export default function Home() {
 
   const checkedCount = checkedFiles.size;
   const allChecked = mdFiles.length > 0 && checkedFiles.size === mdFiles.length;
+  const batchMode = checkedCount > 0;
+  // side-by-side (file list left, textarea right) once files are loaded and not in batch-select mode;
+  // batch mode reverts to a single wide column since the textarea form is hidden then
+  const sideBySide = mdFiles.length > 0 && !batchMode;
+  const containerMaxW = mdFiles.length > 0 ? "max-w-3xl" : "max-w-2xl";
 
   return (
     <main className="flex flex-col items-center min-h-screen px-6 pt-20 pb-24">
@@ -270,7 +287,7 @@ export default function Home() {
       <h1 className="text-3xl font-semibold tracking-tight mb-2">QA Agent</h1>
       <p className="text-sm text-muted-foreground mb-10">Paste a test case. Watch it run.</p>
 
-      <div className="w-full max-w-2xl space-y-3">
+      <div className={cn("w-full space-y-3", containerMaxW)}>
 
         {/* folder picker */}
         <div className="flex items-center gap-2">
@@ -305,22 +322,23 @@ export default function Home() {
           )}
         </div>
 
-        {/* file list */}
+        {/* file list (left column once side-by-side) + form (right column) */}
+        <div className={cn(sideBySide && "flex gap-4 items-start")}>
         {mdFiles.length > 0 && (
-          <>
+          <div className={cn(sideBySide ? "w-64 shrink-0" : "w-full", "space-y-3")}>
             <ul className="rounded-xl border border-white/7 divide-y divide-white/5 overflow-hidden">
               {/* select-all row */}
               <li>
                 <div className="flex items-center gap-3 px-4 py-2 bg-white/[0.02]">
                   <button type="button" onClick={toggleAll}
-                    className="shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors">
+                    className="flex items-center gap-2 shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors">
                     {allChecked
                       ? <CheckSquare className="size-4 text-foreground/70" />
                       : <Square className="size-4" />}
+                    <span className="text-[11px] text-muted-foreground/70 select-none">
+                      {checkedCount > 0 ? `${checkedCount} selected` : "Select all"}
+                    </span>
                   </button>
-                  <span className="text-[11px] text-muted-foreground/50 select-none">
-                    {checkedCount > 0 ? `${checkedCount} selected` : "Select all"}
-                  </span>
 
                   {checkedCount > 0 && !batchRunning && (
                     <div className="ml-auto flex items-center gap-1.5">
@@ -407,8 +425,8 @@ export default function Home() {
                       {item.status !== "queued" && item.status !== "running" && item.status !== "skipped" && (
                         <span className={cn(
                           "shrink-0 text-[10.5px] font-semibold uppercase tracking-wide",
-                          item.status === "passed" ? "text-green-500" :
-                          item.status === "failed" || item.status === "error" ? "text-red-500" :
+                          item.status === "passed" ? "text-success" :
+                          item.status === "failed" || item.status === "error" ? "text-destructive" :
                           "text-muted-foreground/40"
                         )}>
                           {item.status}
@@ -419,58 +437,72 @@ export default function Home() {
                 </ul>
               </div>
             )}
-          </>
+          </div>
         )}
 
-        {/* form */}
-        <form ref={formRef} onSubmit={onSubmit} className="space-y-3">
-          <div className={cn(
-            "rounded-xl border transition-all duration-200",
-            focused ? "border-white/15 shadow-[0_0_0_3px_oklch(0.5_0.1_270_/_12%)]" : "border-white/7",
-          )}>
-            <Textarea
-              placeholder="Paste your test case here…"
-              value={text}
-              onChange={e => setTextSaved(e.target.value)}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
-              onKeyDown={e => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  formRef.current?.requestSubmit();
-                }
-              }}
-              rows={16}
-              className="min-h-[320px] font-mono text-[12.5px] leading-relaxed resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 rounded-xl p-4"
-            />
-          </div>
+        {/* form — hidden while batch files are checked, to avoid a second redundant Run pair */}
+        {!batchMode && (
+          <form ref={formRef} onSubmit={onSubmit} className={cn("space-y-3", sideBySide && "flex-1 min-w-0")}>
+            <div className={cn(
+              "relative rounded-xl border transition-all duration-200",
+              focused ? "border-white/15 shadow-[0_0_0_3px_oklch(0.5_0.1_270_/_12%)]" : "border-white/7",
+            )}>
+              <Textarea
+                ref={textareaRef}
+                placeholder="Paste your test case here…"
+                value={text}
+                onChange={e => setTextSaved(e.target.value)}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                onKeyDown={e => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    formRef.current?.requestSubmit();
+                  }
+                }}
+                rows={16}
+                className={cn(
+                  "min-h-[320px] font-mono text-[12.5px] leading-relaxed resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 rounded-xl p-4 overflow-y-auto",
+                  textExpanded ? "max-h-[65vh]" : "max-h-[360px]",
+                  textOverflowing && "pb-9",
+                )}
+              />
+              {textOverflowing && (
+                <button type="button"
+                  onClick={() => setTextExpanded(v => !v)}
+                  className="absolute bottom-2 right-3 flex items-center gap-1 rounded-md border border-white/10 bg-background/80 backdrop-blur px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                  {textExpanded
+                    ? <><ChevronUp className="size-3.5" />Collapse</>
+                    : <><ChevronDown className="size-3.5" />Expand</>}
+                </button>
+              )}
+            </div>
 
-          <div className="flex items-center gap-2">
-            <Button type="submit" disabled={!text.trim() || busy} size="lg" className="gap-2 font-medium">
-              {busy ? "Running…" : <><ArrowRight className="size-4" />Run</>}
-            </Button>
-            <Button type="button" disabled={!text.trim() || busy} size="lg" variant="secondary"
-              onClick={() => startRun(false)} className="gap-2">
-              {busy ? "Running…" : <><ArrowRight className="size-4" />Run with preview</>}
-            </Button>
-            <Button type="button" variant="ghost" size="lg"
-              onClick={() => setTextSaved(EXAMPLE)}
-              className="text-muted-foreground hover:text-foreground">
-              <FileText className="size-4" />Example
-            </Button>
-
-            {error && <span className="text-destructive text-xs ml-1">{error}</span>}
-
-            <kbd className="ml-auto hidden sm:inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-[10px] font-mono text-muted-foreground/60">
-              ⌘ + ↵
-            </kbd>
-          </div>
-        </form>
+            <div className="flex items-center gap-2">
+              <Button type="submit" disabled={!text.trim() || busy} size="lg" className="gap-2 font-medium">
+                {busy ? "Running…" : <><ArrowRight className="size-4" />Run</>}
+              </Button>
+              <Button type="button" disabled={!text.trim() || busy} size="lg" variant="secondary"
+                onClick={() => startRun(false)} className="gap-2">
+                {busy ? "Running…" : <><ArrowRight className="size-4" />Run with preview</>}
+              </Button>
+              <div className="ml-auto flex items-center gap-3">
+                {error && <span className="text-destructive text-xs">{error}</span>}
+                <Button type="button" variant="ghost" size="lg"
+                  onClick={() => setTextSaved(EXAMPLE)}
+                  className="text-muted-foreground hover:text-foreground">
+                  <FileText className="size-4" />Example
+                </Button>
+              </div>
+            </div>
+          </form>
+        )}
+        </div>
       </div>
 
       {/* history */}
       {history.length > 0 && (
-        <div className="w-full max-w-2xl mt-12">
+        <div className={cn("w-full mt-12", containerMaxW)}>
           <div className="text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/40 mb-3">
             Recent runs
           </div>
@@ -498,9 +530,9 @@ function BatchStatusIcon({ status }: { status: "queued" | "skipped" | RunStatus 
   if (status === "running")
     return <Loader2 className="size-3.5 shrink-0 text-muted-foreground/50 animate-spin" />;
   if (status === "passed")
-    return <Check className="size-3.5 shrink-0 text-green-500" strokeWidth={2.5} />;
+    return <Check className="size-3.5 shrink-0 text-success" strokeWidth={2.5} />;
   if (status === "failed" || status === "error")
-    return <CircleAlert className="size-3.5 shrink-0 text-red-500" />;
+    return <CircleAlert className="size-3.5 shrink-0 text-destructive" />;
   if (status === "paused")
     return <span className="size-3.5 shrink-0 text-[10px] text-muted-foreground/40 font-mono">▐▐</span>;
   if (status === "skipped")
@@ -510,9 +542,9 @@ function BatchStatusIcon({ status }: { status: "queued" | "skipped" | RunStatus 
 
 function RunStatusIcon({ status }: { status: RunStatus }) {
   if (status === "passed")
-    return <Check className="size-3.5 shrink-0 text-green-500" strokeWidth={2.5} />;
+    return <Check className="size-3.5 shrink-0 text-success" strokeWidth={2.5} />;
   if (status === "failed" || status === "error")
-    return <CircleAlert className="size-3.5 shrink-0 text-red-500" />;
+    return <CircleAlert className="size-3.5 shrink-0 text-destructive" />;
   return <Clock className="size-3.5 shrink-0 text-muted-foreground/40" />;
 }
 
