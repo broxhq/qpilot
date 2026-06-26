@@ -52,6 +52,7 @@ export interface Run {
   createdAt: number;
   status: RunStatus;
   title: string;
+  testCase: string;
   events: RunEvent[];
   steps: StepResult[];
   summary?: string;

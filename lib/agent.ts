@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { spawn } from "node:child_process";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
 import { askQuestion, checkPause, getRun, pushEvent, saveScreenshot, setPlan } from "./store";
 import { TOOLS, findAnchor, snapshot } from "./tools";
@@ -547,8 +548,11 @@ async function callModel(
 export async function runAgent(
   runId: string,
   testCase: string,
+  headless = true,
 ): Promise<void> {
   let browser: Browser | null = null;
+
+  const wakeLock = spawnWakeLock();
 
   const cfg = resolveProvider();
   const client =
@@ -559,7 +563,7 @@ export async function runAgent(
   try {
     browser = await chromium.launch({
       channel: "chrome",
-      headless: process.env.HEADLESS !== "false",
+      headless,
     });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
@@ -739,5 +743,30 @@ export async function runAgent(
     pushEvent(runId, { ts: Date.now(), kind: "error", text: message });
   } finally {
     await browser?.close().catch(() => {});
+    wakeLock?.kill();
   }
+}
+
+function spawnWakeLock() {
+  try {
+    if (process.platform === "darwin") {
+      return spawn("caffeinate", ["-i"], { stdio: "ignore" });
+    }
+    if (process.platform === "win32") {
+      // Calls SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED) every 30s.
+      // When the process is killed the OS automatically clears the requirement.
+      const ps = `Add-Type -Name K -Namespace W -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; while($true){[W.K]::SetThreadExecutionState(0x80000003); Start-Sleep 30}`;
+      return spawn("powershell", ["-NonInteractive", "-Command", ps], { stdio: "ignore" });
+    }
+    if (process.platform === "linux") {
+      return spawn(
+        "systemd-inhibit",
+        ["--what=sleep:idle", "--who=qpilot", "--why=Running test", "--mode=block", "sleep", "infinity"],
+        { stdio: "ignore" },
+      );
+    }
+  } catch {
+    // wake lock is best-effort — ignore if unavailable
+  }
+  return null;
 }

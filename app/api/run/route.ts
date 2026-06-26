@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: cfgError }, { status: 500 });
   }
 
-  let body: { testCase?: unknown };
+  let body: { testCase?: unknown; headless?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -25,11 +25,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "testCase is required" }, { status: 400 });
   }
 
+  const headless = body.headless !== false;
   const title = firstNonEmptyLine(testCase) || "Untitled test";
   const id = crypto.randomBytes(6).toString("hex");
-  createRun(id, title);
+  createRun(id, title, testCase);
 
-  runAgent(id, testCase).catch((err) => {
+  runAgent(id, testCase, headless).catch((err) => {
     console.error("agent crashed", err);
   });
 
