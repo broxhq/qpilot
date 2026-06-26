@@ -19,7 +19,6 @@ const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
 
 const args = process.argv.slice(2);
-let VISIBLE = args.includes("--visible") || args.includes("-v");
 const WANTS_SETUP =
   args[0] === "config" || args[0] === "setup" || args.includes("--config");
 // menu/prompts only in a real terminal; in scripts start silently
@@ -231,7 +230,7 @@ async function runSetup(p) {
   return cfg;
 }
 
-/** Config card + menu: Start / Start visible / Change / Exit. */
+/** Config card + menu: Start / Change / Exit. */
 async function startMenu(p, cfg, source) {
   for (;;) {
     p.note(configSummary(cfg, source), "Provider");
@@ -239,23 +238,15 @@ async function startMenu(p, cfg, source) {
       p,
       await p.select({
         message: "Ready to go?",
-        initialValue: VISIBLE ? "start-visible" : "start",
+        initialValue: "start",
         options: [
-          { value: "start", label: "Start", hint: "headless — agent works in background" },
-          {
-            value: "start-visible",
-            label: "Start with visible browser",
-            hint: "watch the agent click through pages",
-          },
+          { value: "start", label: "Start" },
           { value: "config", label: "Change provider / model" },
           { value: "exit", label: "Exit" },
         ],
       }),
     );
-    if (action === "start" || action === "start-visible") {
-      VISIBLE = action === "start-visible";
-      return cfg;
-    }
+    if (action === "start") return cfg;
     if (action === "exit") {
       p.cancel("Bye!");
       process.exit(0);
@@ -275,7 +266,6 @@ function startServer(serverPath, port, envExtra) {
         ...envExtra,
         PORT: String(port),
         HOSTNAME: "127.0.0.1",
-        HEADLESS: VISIBLE ? "false" : "true",
       },
       stdio: "inherit",
     });
@@ -330,7 +320,6 @@ async function main() {
     const source = loadConfig() ? CONFIG_PATH : "env / .env.local";
     cfg = await startMenu(p, cfg, source);
 
-    if (VISIBLE) p.log.info("--visible: browser window will be shown");
     p.outro(pc.dim("Launching…"));
   }
 
