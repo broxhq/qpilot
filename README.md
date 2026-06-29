@@ -9,6 +9,11 @@
 
 > If qpilot saved you time → **[⭐ Star it on GitHub](https://github.com/broxhq/qpilot)**. It helps more than you'd think.
 
+<p align="center">
+  <img src="docs/assets/home.png" width="46%" alt="qpilot home screen — paste a test case, folder picker, run history" />
+  <img src="docs/assets/run.png" width="46%" alt="qpilot run screen — live pass/fail per step" />
+</p>
+
 ---
 
 ## How it works
@@ -19,6 +24,14 @@
 4. If it hits a captcha or OTP, it pauses and asks you directly
 
 No code. No Selenium. No config files.
+
+| | Manual testing | Selenium / Playwright scripts | **qpilot** |
+|---|---|---|---|
+| Setup | none | write + maintain a test suite | paste plain text |
+| Survives UI changes | n/a (a human adapts) | breaks on selector/layout changes | reads the page like a human, via ARIA semantics |
+| Who can write a test | anyone | someone who codes | anyone who can write a step-by-step description |
+| OTP / captcha | human handles it | usually blocks the run | pauses and asks you, then continues |
+| Result | you watched it yourself | pass/fail, no narrative | pass/fail/warn per step, with evidence |
 
 ---
 
