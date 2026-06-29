@@ -10,8 +10,7 @@
 > If qpilot saved you time → **[⭐ Star it on GitHub](https://github.com/broxhq/qpilot)**. It helps more than you'd think.
 
 <p align="center">
-  <img src="docs/assets/home.png" width="46%" alt="qpilot home screen — paste a test case, folder picker, run history" />
-  <img src="docs/assets/run.png" width="46%" alt="qpilot run screen — live pass/fail per step" />
+  <img src="docs/assets/demo.gif" width="700" alt="qpilot demo — paste a test case, hit Run, watch live pass/fail per step" />
 </p>
 
 ---
