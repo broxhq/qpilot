@@ -170,6 +170,27 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "upload_file",
+    description:
+      "Attach one of the run's files to a file-upload control on the page. This hands the file to the page — it does NOT reveal the file's contents to you. Only files listed as attached to this run can be used; give the file name exactly as listed. Works with a plain <input type=file> and with custom 'Choose file' buttons that open the OS file dialog. Omit ref if the page has just one upload control; pass ref when there are several, or the ref of the visible button/dropzone that opens the file dialog.",
+    input_schema: {
+      type: "object",
+      properties: {
+        file: {
+          type: "string",
+          description: "Name of an attached file, exactly as listed in the task, e.g. 'users.csv'",
+        },
+        ref: {
+          type: "string",
+          description:
+            "Optional ref of the file input, or of the button/dropzone that opens the file dialog. Omit to use the only upload control on the page (file inputs are often hidden and absent from the snapshot).",
+        },
+        name: { type: "string", description: "Human-readable label for the log" },
+      },
+      required: ["file"],
+    },
+  },
+  {
     name: "ask_user",
     description:
       "Ask the user for ONE specific value needed right now (OTP/SMS code, captcha, phone number for login). Use ONLY when the value is not in the test case and the agent cannot know it. prompt must describe exactly the field currently on screen (by its label/placeholder from the snapshot).",

@@ -175,20 +175,31 @@ export async function callOpenAICompatible(
 ): Promise<Anthropic.Message> {
   const url = cfg.baseURL.replace(/\/+$/, "") + "/chat/completions";
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      max_tokens: MAX_TOKENS,
-      messages: toOpenAIMessages(system, messages),
-      tools: toOpenAITools(tools),
-      tool_choice: "auto",
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: MAX_TOKENS,
+        messages: toOpenAIMessages(system, messages),
+        tools: toOpenAITools(tools),
+        tool_choice: "auto",
+      }),
+    });
+  } catch (err) {
+    // Node's network errors are bare ("fetch failed") — say what was unreachable,
+    // otherwise the run just shows two useless words.
+    const cause = (err as { cause?: { message?: string; code?: string } }).cause;
+    const detail = cause?.code ?? cause?.message ?? (err as Error).message;
+    throw new Error(
+      `Cannot reach the model endpoint ${url} (${detail}). Check that the URL is right, the service is up, and you are on the network/VPN it needs. Run \`qpilot config\` to change it.`,
+    );
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

@@ -1,108 +1,49 @@
-# qpilot
-
-**AI agent that runs your manual test cases in a real browser**
-
-[![npm](https://img.shields.io/npm/v/qpilot)](https://www.npmjs.com/package/qpilot)
-[![GitHub stars](https://img.shields.io/github/stars/broxhq/qpilot?style=social)](https://github.com/broxhq/qpilot)
-![node](https://img.shields.io/badge/node-%3E%3D20.12-brightgreen)
-![license](https://img.shields.io/badge/license-MIT-blue)
-
-> If qpilot saved you time → **[⭐ Star it on GitHub](https://github.com/broxhq/qpilot)**. It helps more than you'd think.
+<h1 align="center">qpilot</h1>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="700" alt="qpilot demo — paste a test case, hit Run, watch live pass/fail per step" />
+  <b>An AI agent that runs your manual test cases in a real browser.</b><br>
+  Paste plain text. Watch it click.
 </p>
 
----
+<p align="center">
+  <a href="https://www.npmjs.com/package/qpilot"><img src="https://img.shields.io/npm/v/qpilot" alt="npm"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D20.12-brightgreen" alt="node">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+  <a href="https://github.com/broxhq/qpilot"><img src="https://img.shields.io/github/stars/broxhq/qpilot?style=social" alt="stars"></a>
+</p>
 
-## How it works
-
-1. You paste a plain-text test case
-2. The agent opens Chrome and executes each step
-3. You watch results appear live — `pass`, `fail`, or `warn` per step
-4. If it hits a captcha or OTP, it pauses and asks you directly
-
-No code. No Selenium. No config files.
-
-| | Manual testing | Selenium / Playwright scripts | **qpilot** |
-|---|---|---|---|
-| Setup | none | write + maintain a test suite | paste plain text |
-| Survives UI changes | n/a (a human adapts) | breaks on selector/layout changes | reads the page like a human, via ARIA semantics |
-| Who can write a test | anyone | someone who codes | anyone who can write a step-by-step description |
-| OTP / captcha | human handles it | usually blocks the run | pauses and asks you, then continues |
-| Result | you watched it yourself | pass/fail, no narrative | pass/fail/warn per step, with evidence |
-
----
-
-## Quick start
-
-**Requirements:** Node.js 20.12+, Google Chrome, an [Anthropic API key](https://console.anthropic.com) — or any OpenAI-compatible model endpoint (Qwen, vLLM, Ollama, corporate gateway)
+<p align="center">
+  <img src="docs/assets/demo.gif" width="720" alt="Paste a test case, hit Run, watch live pass/fail per step">
+</p>
 
 ```bash
 npx qpilot
 ```
 
-That's it. On first run qpilot walks you through a quick provider setup (arrow-key menu), then every launch shows your config and a Start menu.
+That's the whole install. First launch walks you through picking a model, then opens
+the UI in your browser.
 
-Browser opens automatically at `http://localhost:3847`.
+**Needs:** Node.js 20.12+, Google Chrome, and an [Anthropic API key](https://console.anthropic.com)
+— or any OpenAI-compatible endpoint (Qwen, vLLM, Ollama, a corporate gateway).
 
----
+## How it works
 
-## Models & providers
+1. Paste a plain-text test case — the messy kind a PM writes in Confluence is fine.
+2. The agent opens Chrome and executes each step.
+3. Results stream in live: `pass`, `fail` or `warn` per step, with evidence quoted
+   from the page and a screenshot on failure.
+4. Hits an OTP or captcha? It pauses and asks you, then carries on.
 
-On first run qpilot asks which model to use. You can re-run setup anytime:
+There is no test code, no selectors and no config files. The agent reads the page
+as an accessibility tree on every action, so nothing is stored that can go stale.
 
-```bash
-npx qpilot config
-```
-
-Two options:
-
-- **Anthropic (Claude)** — enter your `sk-ant-…` key. Default model is `claude-haiku-4-5`.
-  Base URL is optional — set it if you reach Claude through a corporate proxy/gateway.
-- **Custom** — any **OpenAI-compatible** endpoint: Qwen, vLLM, Ollama, a corporate
-  gateway, OpenRouter, or OpenAI itself. You provide a **base URL**, **API token**
-  and **model id**, e.g.:
-
-  ```
-  Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-  Model id: qwen2.5-72b-instruct
-  ```
-
-Your choice is saved to `~/.qpilot/config.json` (mode `600`) and reused on every run.
-
-> The custom path speaks the OpenAI `/chat/completions` protocol with tool calling —
-> so the model must support function/tool calling for the agent to drive the browser.
-
-### API key (Anthropic shortcut)
-
-For the Anthropic provider you can skip setup by supplying the key via env:
-
-1. `ANTHROPIC_API_KEY` environment variable
-2. `.env.local` file in the current directory
-
-```bash
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env.local
-```
-
-The key is never stored except in `~/.qpilot/config.json` when you run setup.
-
----
-
-## Options
-
-| Command | Description |
-|------|-------------|
-| `qpilot config` | Re-run provider setup (Anthropic or custom model) |
-
-```bash
-npx qpilot config
-```
-
-Browser visibility is a per-run choice in the UI, not a CLI flag: hit **Run** to
-stay headless, or **Run with preview** to watch Chrome click through the page.
-
----
+| | Manual testing | Scripted e2e | **qpilot** |
+|---|---|---|---|
+| To add a test | write the steps | write and maintain code | write the steps |
+| Who can write it | anyone | someone who codes | anyone |
+| After a redesign | a human adapts | update the test code | nothing to update |
+| OTP / captcha | handled by the human | usually blocks the run | pauses and asks you |
+| Output | you watched it | pass/fail | pass/fail/warn per step + evidence |
 
 ## Writing a test case
 
@@ -120,27 +61,61 @@ Steps:
 
 3. Click "Add to cart" on "Sauce Labs Backpack".
    Expected: cart counter shows 1.
-
-4. Click the cart icon.
-   Expected: cart contains Sauce Labs Backpack at $29.99.
 ```
 
-You can paste multiple test cases at once — the agent runs them in order.
+No format is required — headings, numbering and "Expected:" lines are all optional.
+The clearer the expected result, the stricter the check. Paste several test cases
+at once and the agent runs them in order, grouped in the UI.
+
+## Attachments
+
+Some steps need a file: an avatar to upload, a CSV to import, a PDF to attach.
+Click **Attach files** before running, and the agent can hand them to any upload
+control on the page — including the hidden `<input type=file>` behind a styled
+"Choose file" button.
+
+Files live only for the duration of the run and are deleted when it ends. The agent
+can upload them, but never sees what is inside them.
+
+## A folder of test cases
+
+**Choose folder** points qpilot at a directory of `.md` files. Tick the ones you
+want and run them as a batch — one after another, with live status and timing, and
+a **Stop** button. Finished runs land under **Recent runs**.
+
+## Models
+
+```bash
+npx qpilot config
+```
+
+- **Anthropic (Claude)** — paste your `sk-ant-…` key. Defaults to `claude-haiku-4-5`.
+  A base URL is optional, for reaching Claude through a corporate proxy.
+- **Custom** — any OpenAI-compatible endpoint. Give it a base URL, token and model id:
+
+  ```
+  Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  Model id: qwen2.5-72b-instruct
+  ```
+
+  The model must support tool calling — that is how the agent drives the browser.
+
+Your choice is saved to `~/.qpilot/config.json` (mode `600`). For the Anthropic
+provider you can skip setup entirely with an `ANTHROPIC_API_KEY` env var or a
+`.env.local` file.
+
+## Good to know
+
+- Everything runs locally. Nothing leaves your machine except the model calls, so
+  qpilot works against staging and internal networks.
+- Browser visibility is per run: **Run** stays headless, **Run with preview** lets
+  you watch Chrome work.
+- Runs are held in memory, last 50 only — restarting the server clears them.
+- A genuinely broken page still fails the run. That is the point.
 
 ---
 
-## Running a folder of test cases
-
-Click **Choose folder** to point qpilot at a directory of `.md` files (or **Upload
-.md** for a single file). Check the ones you want, then **Run** the batch — each
-file runs one after another with live status and timing, and you can **Stop**
-mid-batch. Finished runs (including past batches) show up under **Recent runs**
-on the home page.
-
----
-
-## Notes
-
-- API key is stored only in `~/.qpilot/config.json` (file mode `600`) — never sent anywhere except your chosen model provider
-- Runs are in-memory and capped at the last 50 — restarting the server clears all of them
-- Powered by [Claude](https://anthropic.com) + [Playwright](https://playwright.dev)
+<p align="center">
+  Built with <a href="https://www.anthropic.com">Claude</a> and <a href="https://playwright.dev">Playwright</a>.<br>
+  If qpilot saved you time, a <a href="https://github.com/broxhq/qpilot">⭐ on GitHub</a> helps more than you'd think.
+</p>

@@ -1,16 +1,19 @@
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
+import type { StoredFile } from "./attachments";
 import type { PendingQuestion, PlanGroup, Run, RunEvent } from "./types";
 
 // All state for one run lives in a single entry: the Run, its emitter, pending
-// questions, the pause gate, and screenshots (JPEG buffers served via
-// GET /api/run/[id]/shot/[num] — never inlined into events).
+// questions, the pause gate, screenshots (JPEG buffers served via
+// GET /api/run/[id]/shot/[num] — never inlined into events) and the on-disk
+// paths of attachments (paths stay server-side; the Run only carries names).
 interface Entry {
   run: Run;
   emitter: EventEmitter;
   waiters: Map<string, (answer: string) => void>;
   pauseGate: (() => void) | null;
   screenshots: Map<number, Buffer>;
+  files: StoredFile[];
 }
 
 const g = globalThis as unknown as { __qa_entries?: Map<string, Entry> };
@@ -19,7 +22,12 @@ const entries = (g.__qa_entries ??= new Map<string, Entry>());
 const ACTIVE = new Set(["running", "waiting", "paused"]);
 const MAX_HISTORY = 50;
 
-export function createRun(id: string, title: string, testCase = ""): Run {
+export function createRun(
+  id: string,
+  title: string,
+  testCase = "",
+  files: StoredFile[] = [],
+): Run {
   // keep at most MAX_HISTORY finished runs
   const finished = [...entries.entries()].filter(([, e]) => !ACTIVE.has(e.run.status));
   finished
@@ -34,6 +42,7 @@ export function createRun(id: string, title: string, testCase = ""): Run {
     testCase,
     events: [],
     steps: [],
+    attachments: files.map(({ name, size }) => ({ name, size })),
     pending: null,
   };
   entries.set(id, {
@@ -42,8 +51,14 @@ export function createRun(id: string, title: string, testCase = ""): Run {
     waiters: new Map(),
     pauseGate: null,
     screenshots: new Map(),
+    files,
   });
   return run;
+}
+
+/** On-disk attachments for the agent — server-side only, never sent to the UI. */
+export function getFiles(id: string): StoredFile[] {
+  return entries.get(id)?.files ?? [];
 }
 
 export function getRun(id: string): Run | undefined {

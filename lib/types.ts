@@ -22,6 +22,16 @@ export interface PendingQuestion {
   secret: boolean;
 }
 
+/**
+ * A file the user attached to the run (CSV, image, PDF…) so the agent can feed
+ * it to a file input on the page. What the UI sees — the on-disk path stays
+ * server-side in the store.
+ */
+export interface Attachment {
+  name: string;
+  size: number;
+}
+
 export interface RunEvent {
   ts: number;
   kind:
@@ -55,6 +65,7 @@ export interface Run {
   testCase: string;
   events: RunEvent[];
   steps: StepResult[];
+  attachments: Attachment[];
   summary?: string;
   pending?: PendingQuestion | null;
 }

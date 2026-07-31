@@ -10,6 +10,7 @@ import {
   CircleAlert,
   Clock,
   Loader2,
+  Paperclip,
   Pause,
   Play,
   Star,
@@ -36,7 +37,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
+import { cn, formatDuration } from "@/lib/utils";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -188,7 +189,9 @@ export default function RunPage({ params }: PageProps) {
                   {failN > 0 && <span className="text-destructive ml-2">· {failN} failed</span>}
                 </>
               ) : (
-                <span className="text-muted-foreground/50">waiting for plan…</span>
+                <span className="text-muted-foreground/50">
+                  {isActive ? "waiting for plan…" : "no steps were run"}
+                </span>
               )}
             </p>
             <div className="flex items-center gap-2 shrink-0">
@@ -229,13 +232,27 @@ export default function RunPage({ params }: PageProps) {
 
       {/* steps */}
       <section className="space-y-2">
+        {/* a run can end (crash, config error) before the agent ever set a plan —
+            keep spinning only while it is actually still going */}
         {steps.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <Loader2 className="size-5 text-muted-foreground/30 animate-spin mb-3" />
-            <p className="text-sm text-muted-foreground/50">
-              waiting for agent to start…
-            </p>
-          </div>
+          isActive ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Loader2 className="size-5 text-muted-foreground/30 animate-spin mb-3" />
+              <p className="text-sm text-muted-foreground/50">
+                waiting for agent to start…
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <CircleAlert className="size-5 text-muted-foreground/25 mb-3" />
+              <p className="text-sm text-muted-foreground/50">
+                The run ended before the agent produced a plan.
+              </p>
+              <p className="text-xs text-muted-foreground/35 mt-1">
+                See the reason below.
+              </p>
+            </div>
+          )
         )}
         {groups.map((g, gi) => (
           <div key={gi} className="space-y-2">
@@ -288,6 +305,29 @@ export default function RunPage({ params }: PageProps) {
         </Collapsible>
       )}
 
+      {/* files the agent could upload during this run */}
+      {run?.attachments && run.attachments.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40 mr-1">
+            <Paperclip className="size-3" />
+            Attached
+          </span>
+          {run.attachments.map((a) => (
+            <span
+              key={a.name}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/8 bg-white/[0.03] px-2.5 py-1"
+            >
+              <span className="text-[11px] font-mono text-foreground/70 max-w-[200px] truncate">
+                {a.name}
+              </span>
+              <span className="text-[10px] tabular-nums text-muted-foreground/35">
+                {formatSize(a.size)}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* star CTA — show once a run has finished (the "you just saw it work" moment) */}
       {(status === "passed" || status === "failed") && <StarCta />}
 
@@ -301,9 +341,10 @@ export default function RunPage({ params }: PageProps) {
   );
 }
 
-function formatDuration(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function StarCta() {
@@ -560,6 +601,7 @@ function describeAction(name?: string, input?: unknown): string {
       return `Scrolling ${dirs || "0px"}${target}`;
     }
     case "press":    return `Pressing ${p.key ?? ""}`;
+    case "upload_file": return `Uploading "${p.file ?? ""}"${p.name ? ` to "${p.name}"` : ""}`;
     case "dismiss":  return "Closing overlay";
     case "wait":     return `Waiting ${p.ms ?? ""} ms`;
     case "ask_user": return "Asking user";

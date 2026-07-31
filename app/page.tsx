@@ -6,11 +6,11 @@ import Link from "next/link";
 import {
   Bot, FileText, ArrowRight, Upload, Folder, X,
   Check, CircleAlert, Clock, Loader2, Square, CheckSquare,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Paperclip,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { cn, formatDuration } from "@/lib/utils";
 import type { RunStatus } from "@/lib/types";
 import { updateFavicon, resetFavicon } from "@/lib/favicon";
 
@@ -20,6 +20,16 @@ type BatchItem = { file: MdFile; id: string | null; status: "queued" | "skipped"
 
 const ACTIVE = new Set(["running", "waiting", "paused"]);
 const TEXTAREA_COLLAPSED_MAX = 360; // px — close to the default box height
+
+// keep in sync with lib/attachments.ts
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+// shared surface tokens — one place to keep panels visually consistent
+const PANEL = "rounded-xl border border-white/7 overflow-hidden";
+const PANEL_HEAD = "px-4 py-2.5 bg-white/[0.02]";
+const SECTION_LABEL =
+  "text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/40";
 
 const EXAMPLE = `TC-001 — Login and add item to cart
 URL: https://www.saucedemo.com/
@@ -40,6 +50,7 @@ let _text = "";
 let _mdFiles: MdFile[] = [];
 let _selectedFile: string | null = null;
 let _checkedFiles: Set<string> = new Set();
+let _attachments: File[] = [];
 let _batchItems: BatchItem[] = [];
 let _batchRunning = false;
 let _batchAbort = false;
@@ -52,6 +63,7 @@ export default function Home() {
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [text, setText] = useState(_text);
@@ -62,6 +74,7 @@ export default function Home() {
   const [textOverflowing, setTextOverflowing] = useState(false);
   const [mdFiles, setMdFiles] = useState<MdFile[]>(_mdFiles);
   const [selectedFile, setSelectedFile] = useState<string | null>(_selectedFile);
+  const [attachments, setAttachments] = useState<File[]>(_attachments);
   const [history, setHistory] = useState<RunSummary[]>([]);
 
   const [checkedFiles, setCheckedFiles] = useState<Set<string>>(_checkedFiles);
@@ -114,6 +127,7 @@ export default function Home() {
   function setMdFilesSaved(v: MdFile[]) { _mdFiles = v; setMdFiles(v); }
   function setSelectedFileSaved(v: string | null) { _selectedFile = v; setSelectedFile(v); }
   function setCheckedFilesSaved(v: Set<string>) { _checkedFiles = v; setCheckedFiles(v); }
+  function setAttachmentsSaved(v: File[]) { _attachments = v; setAttachments(v); }
   function setBatchItemsSaved(v: BatchItem[] | ((prev: BatchItem[]) => BatchItem[])) {
     const next = typeof v === "function" ? v(_batchItems) : v;
     _batchItems = next;
@@ -136,13 +150,43 @@ export default function Home() {
     const all = Array.from(e.target.files ?? []);
     const files: MdFile[] = all
       .filter(f => f.name.endsWith(".md"))
-      .map(f => ({ name: (f as any).webkitRelativePath || f.name, file: f }));
+      .map(f => ({ name: f.webkitRelativePath || f.name, file: f }));
     files.sort((a, b) => a.name.localeCompare(b.name));
     setMdFilesSaved(files);
     setSelectedFileSaved(null);
     setCheckedFilesSaved(new Set());
     setBatchItemsSaved([]);
     e.target.value = "";
+  }
+
+  // ── attachments (materials the agent can upload during a test) ───────────────
+
+  function addAttachments(incoming: File[]) {
+    if (!incoming.length) return;
+    const tooBig = incoming.find(f => f.size > MAX_ATTACHMENT_BYTES);
+    if (tooBig) {
+      setError(`"${tooBig.name}" is larger than ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`);
+      return;
+    }
+    // de-dupe by name so re-picking the same file doesn't stack up
+    const byName = new Map(attachments.map(f => [f.name, f]));
+    for (const f of incoming) byName.set(f.name, f);
+    const next = [...byName.values()];
+    if (next.length > MAX_ATTACHMENTS) {
+      setError(`At most ${MAX_ATTACHMENTS} attachments per run`);
+      return;
+    }
+    setError(null);
+    setAttachmentsSaved(next);
+  }
+
+  function onAttachChange(e: React.ChangeEvent<HTMLInputElement>) {
+    addAttachments(Array.from(e.target.files ?? []));
+    e.target.value = "";
+  }
+
+  function removeAttachment(name: string) {
+    setAttachmentsSaved(attachments.filter(f => f.name !== name));
   }
 
   async function onSelectFile(f: MdFile) {
@@ -163,14 +207,23 @@ export default function Home() {
     );
   }
 
+  function clearFolder() {
+    setMdFilesSaved([]);
+    setSelectedFileSaved(null);
+    setCheckedFilesSaved(new Set());
+    setBatchItemsSaved([]);
+  }
+
   // ── single run ───────────────────────────────────────────────────────────────
 
   async function createRunApi(content: string, headless: boolean): Promise<string> {
-    const res = await fetch("/api/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ testCase: content, headless }),
-    });
+    // multipart so attachments ride along with the test case
+    const form = new FormData();
+    form.append("testCase", content);
+    form.append("headless", String(headless));
+    for (const f of _attachments) form.append("files", f);
+
+    const res = await fetch("/api/run", { method: "POST", body: form });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "error");
     return json.id;
@@ -289,13 +342,17 @@ export default function Home() {
 
       <div className={cn("w-full space-y-3", containerMaxW)}>
 
-        {/* folder picker */}
+        {/* hidden pickers */}
+        <input ref={folderInputRef} type="file"
+          // @ts-expect-error — non-standard but supported by Chrome/Edge/Safari
+          webkitdirectory="" multiple className="hidden" onChange={onFolderChange} />
+        <input ref={fileInputRef} type="file" accept=".md,text/markdown"
+          className="hidden" onChange={onFileChange} />
+        <input ref={attachInputRef} type="file" multiple
+          className="hidden" onChange={onAttachChange} />
+
+        {/* source toolbar */}
         <div className="flex items-center gap-2">
-          <input ref={folderInputRef} type="file"
-            // @ts-ignore
-            webkitdirectory="" multiple className="hidden" onChange={onFolderChange} />
-          <input ref={fileInputRef} type="file" accept=".md,text/markdown"
-            className="hidden" onChange={onFileChange} />
           <Button type="button" variant="outline" size="sm"
             onClick={() => folderInputRef.current?.click()}
             className="gap-2 text-muted-foreground hover:text-foreground">
@@ -308,17 +365,17 @@ export default function Home() {
           </Button>
 
           {mdFiles.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {mdFiles.length} .md file{mdFiles.length !== 1 ? "s" : ""} found
-            </span>
-          )}
-
-          {mdFiles.length > 0 && (
-            <Button type="button" variant="ghost" size="sm"
-              onClick={() => { setMdFilesSaved([]); setSelectedFileSaved(null); setCheckedFilesSaved(new Set()); setBatchItemsSaved([]); }}
-              className="ml-auto text-muted-foreground hover:text-foreground p-1 h-auto">
-              <X className="size-3.5" />
-            </Button>
+            <>
+              <span className="text-xs text-muted-foreground/60">
+                {mdFiles.length} .md file{mdFiles.length !== 1 ? "s" : ""}
+              </span>
+              <Button type="button" variant="ghost" size="sm"
+                onClick={clearFolder}
+                title="Clear file list"
+                className="ml-auto size-7 p-0 text-muted-foreground/50 hover:text-foreground">
+                <X className="size-3.5" />
+              </Button>
+            </>
           )}
         </div>
 
@@ -326,10 +383,10 @@ export default function Home() {
         <div className={cn(sideBySide && "flex gap-4 items-start")}>
         {mdFiles.length > 0 && (
           <div className={cn(sideBySide ? "w-64 shrink-0" : "w-full", "space-y-3")}>
-            <ul className="rounded-xl border border-white/7 divide-y divide-white/5 overflow-hidden">
+            <ul className={cn(PANEL, "divide-y divide-white/5")}>
               {/* select-all row */}
               <li>
-                <div className="flex items-center gap-3 px-4 py-2 bg-white/[0.02]">
+                <div className={cn(PANEL_HEAD, "flex items-center gap-3 py-2")}>
                   <button type="button" onClick={toggleAll}
                     className="flex items-center gap-2 shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors">
                     {allChecked
@@ -393,14 +450,12 @@ export default function Home() {
 
             {/* batch progress */}
             {batchItems.length > 0 && (
-              <div className="rounded-xl border border-white/7 overflow-hidden">
-                <div className="px-4 py-2.5 bg-white/[0.02] flex items-center gap-2">
-                  <span className="text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/40">
-                    Batch run
-                  </span>
+              <div className={PANEL}>
+                <div className={cn(PANEL_HEAD, "flex items-center gap-2")}>
+                  <span className={SECTION_LABEL}>Batch run</span>
                   {_batchStartedAt && (
                     <span className="ml-auto text-[11px] font-mono tabular-nums text-muted-foreground/40">
-                      {formatDur((_batchFinishedAt ?? now) - _batchStartedAt)}
+                      {formatDuration((_batchFinishedAt ?? now) - _batchStartedAt)}
                     </span>
                   )}
                 </div>
@@ -419,7 +474,7 @@ export default function Home() {
                       }
                       <span className="shrink-0 text-[11px] font-mono tabular-nums text-muted-foreground/30">
                         {item.startedAt
-                          ? formatDur((item.finishedAt ?? (item.status === "running" ? now : item.startedAt)) - item.startedAt)
+                          ? formatDuration((item.finishedAt ?? (item.status === "running" ? now : item.startedAt)) - item.startedAt)
                           : ""}
                       </span>
                       {item.status !== "queued" && item.status !== "running" && item.status !== "skipped" && (
@@ -486,26 +541,35 @@ export default function Home() {
                 onClick={() => startRun(false)} className="gap-2">
                 {busy ? "Running…" : <><ArrowRight className="size-4" />Run with preview</>}
               </Button>
-              <div className="ml-auto flex items-center gap-3">
-                {error && <span className="text-destructive text-xs">{error}</span>}
-                <Button type="button" variant="ghost" size="lg"
-                  onClick={() => setTextSaved(EXAMPLE)}
-                  className="text-muted-foreground hover:text-foreground">
-                  <FileText className="size-4" />Example
-                </Button>
-              </div>
+              <Button type="button" variant="ghost" size="lg"
+                onClick={() => setTextSaved(EXAMPLE)}
+                className="ml-auto text-muted-foreground hover:text-foreground">
+                <FileText className="size-4" />Example
+              </Button>
             </div>
           </form>
         )}
         </div>
+
+        {/* attachments — shared by single and batch runs */}
+        <AttachmentsPanel
+          files={attachments}
+          onPick={() => attachInputRef.current?.click()}
+          onRemove={removeAttachment}
+        />
+
+        {error && (
+          <div className="flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/[0.06] px-4 py-3">
+            <CircleAlert className="size-4 shrink-0 text-destructive mt-px" />
+            <span className="text-xs leading-relaxed text-destructive">{error}</span>
+          </div>
+        )}
       </div>
 
       {/* history */}
       {history.length > 0 && (
         <div className={cn("w-full mt-12", containerMaxW)}>
-          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/40 mb-3">
-            Recent runs
-          </div>
+          <div className={cn(SECTION_LABEL, "mb-3")}>Recent runs</div>
           <ul className="space-y-1.5">
             {history.map(run => (
               <li key={run.id}>
@@ -523,6 +587,54 @@ export default function Home() {
         </div>
       )}
     </main>
+  );
+}
+
+/**
+ * Files the agent can hand to a file input during the run (photos, CSVs,
+ * documents). They apply to both the single run and every run in a batch.
+ */
+function AttachmentsPanel({
+  files,
+  onPick,
+  onRemove,
+}: {
+  files: File[];
+  onPick: () => void;
+  onRemove: (name: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Button type="button" variant="ghost" size="sm"
+        onClick={onPick}
+        className="gap-2 text-muted-foreground/70 hover:text-foreground">
+        <Paperclip className="size-3.5" />
+        {files.length ? "Add file" : "Attach files"}
+      </Button>
+
+      {files.length === 0 ? (
+        <span className="text-[11px] text-muted-foreground/35">
+          optional — images, CSV or documents the test needs to upload
+        </span>
+      ) : (
+        files.map(f => (
+          <span key={f.name}
+            className="group inline-flex items-center gap-1.5 rounded-lg border border-white/8 bg-white/[0.03] pl-2.5 pr-1 py-1">
+            <span className="text-[11px] font-mono text-foreground/70 max-w-[180px] truncate">
+              {f.name}
+            </span>
+            <span className="text-[10px] tabular-nums text-muted-foreground/35">
+              {formatSize(f.size)}
+            </span>
+            <button type="button" onClick={() => onRemove(f.name)}
+              title={`Remove ${f.name}`}
+              className="rounded p-0.5 text-muted-foreground/40 hover:text-destructive transition-colors">
+              <X className="size-3" />
+            </button>
+          </span>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -548,9 +660,10 @@ function RunStatusIcon({ status }: { status: RunStatus }) {
   return <Clock className="size-3.5 shrink-0 text-muted-foreground/40" />;
 }
 
-function formatDur(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatTime(ts: number): string {

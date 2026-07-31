@@ -1,7 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { spawn } from "node:child_process";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { askQuestion, checkPause, getRun, pushEvent, saveScreenshot, setPlan } from "./store";
+import { cleanupUploads, type StoredFile } from "./attachments";
+import {
+  askQuestion,
+  checkPause,
+  getFiles,
+  getRun,
+  pushEvent,
+  saveScreenshot,
+  setPlan,
+} from "./store";
 import { TOOLS, findAnchor, snapshot } from "./tools";
 import type { PlanGroup } from "./types";
 import {
@@ -36,7 +45,7 @@ Order:
 5. Each step exactly once. finish — after the last step.
 
 EFFICIENCY — you have a limited number of steps, do not waste them:
-- navigate/click/fill/select/hover/press/scroll/scroll_to/wait/dismiss ALREADY return a fresh snapshot in their result. Do NOT call snapshot after them — just read what they returned.
+- navigate/click/fill/select/hover/press/scroll/scroll_to/wait/dismiss/upload_file ALREADY return a fresh snapshot in their result. Do NOT call snapshot after them — just read what they returned.
 - Call snapshot only for the FIRST page read, or to zoom into a block with near=.
 - Batch independent actions in ONE turn: e.g. emit several fill calls together to fill a form, then report. Fewer round-trips = more budget for real work.
 
@@ -63,6 +72,12 @@ Scrolling:
 - scroll returns position and limits (e.g. "Vertical 800/2400px") and flags edges/no-movement — read it: if the window didn't move, content is in an inner block, retry with a ref inside it.
 Do not write [ref=eN] in description/evidence.
 
+Uploading files: when a step needs a file (photo, CSV, document), use upload_file with the name of a file attached to this run — never type a path into a text field. The <input type=file> is usually hidden and absent from the snapshot, so call upload_file WITHOUT ref first; pass ref (of the visible "Choose file" button or dropzone) only if that fails. Never ask_user for a file.
+You CANNOT see what is inside an attached file — you only hand it to the page. You know its name and size, nothing else. So:
+- Never say you read, parsed, checked or counted anything in the file. You did not.
+- Describe the step by what you actually did: "uploaded <name>".
+- For the result, quote what the PAGE reports after the upload (e.g. "Загружено 1 из 1", a file chip, an error). If the page reports nothing, say that — do not infer success from the file's content.
+
 ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
 
 TOOL CALLS ONLY. Do not write text.`;
@@ -75,6 +90,7 @@ interface ToolContext {
   runId: string;
   page: Page;
   step: { current: number };
+  files: StoredFile[];
 }
 
 interface ToolResult {
@@ -413,6 +429,77 @@ async function executeTool(
       return actionResult(page, `OK: waited ${ms}ms`);
     }
 
+    case "upload_file": {
+      const files = ctx.files;
+      if (files.length === 0) {
+        return { content: "Error: no files are attached to this run — nothing to upload." };
+      }
+      const wanted = String(input.file ?? "").trim().toLowerCase();
+      const file =
+        files.find((f) => f.name.toLowerCase() === wanted) ??
+        files.find((f) => f.name.toLowerCase().includes(wanted) && wanted.length > 2);
+      if (!file) {
+        return {
+          content: `No attached file matches "${input.file}". Attached files: ${files
+            .map((f) => f.name)
+            .join(", ")}`,
+        };
+      }
+
+      const ref = typeof input.ref === "string" ? input.ref.trim() : "";
+      if (/^e\d+$/.test(ref)) {
+        const loc = page.locator(`aria-ref=${ref}`);
+        if ((await loc.count()) === 0) {
+          return { content: `ref ${ref} not found — take a fresh snapshot` };
+        }
+        const isFileInput = await loc
+          .evaluate((el) => el instanceof HTMLInputElement && el.type === "file")
+          .catch(() => false);
+        if (isFileInput) {
+          await loc.setInputFiles(file.path, { timeout: 5000 });
+        } else {
+          // a visible button/dropzone: clicking it opens the OS file dialog,
+          // which Playwright intercepts as a filechooser event
+          const [chooser] = await Promise.all([
+            page.waitForEvent("filechooser", { timeout: 5000 }),
+            loc.click({ timeout: 5000 }),
+          ]);
+          await chooser.setFiles(file.path);
+        }
+      } else {
+        // No ref: real file inputs are usually hidden behind a styled button, so
+        // they never show up in the snapshot and have no ref — find them by CSS.
+        const inputs = page.locator('input[type="file"]');
+        const total = await inputs.count();
+        if (total === 0) {
+          return {
+            content:
+              "No file input found on the page. If uploading starts from a button that opens the file dialog, call upload_file again with ref of that button.",
+          };
+        }
+        let target = inputs.first();
+        if (total > 1) {
+          // several inputs — prefer the only visible one, else ask for a ref
+          const visible: number[] = [];
+          for (let i = 0; i < total; i++) {
+            if (await inputs.nth(i).isVisible().catch(() => false)) visible.push(i);
+          }
+          if (visible.length !== 1) {
+            return {
+              content: `The page has ${total} file inputs and none is unambiguous. Call upload_file again with ref of the upload button/dropzone for the field you need.`,
+            };
+          }
+          target = inputs.nth(visible[0]);
+        }
+        await target.setInputFiles(file.path, { timeout: 5000 });
+      }
+
+      return actionResult(
+        page,
+        `OK: attached ${file.name} to ${input.name ?? (ref || "the upload field")}`,
+      );
+    }
+
     case "ask_user": {
       const prompt = String(input.prompt ?? "");
       const secret = Boolean(input.secret);
@@ -573,7 +660,13 @@ export async function runAgent(
     });
     const page = await context.newPage();
 
-    const ctx: ToolContext = { runId, page, step: { current: 1 } };
+    const files = getFiles(runId);
+    const ctx: ToolContext = { runId, page, step: { current: 1 }, files };
+
+    const attachmentNote = files.length
+      ? "\n\nFiles attached to this run — you can ONLY upload them (upload_file, exact name); their contents are not available to you:\n" +
+        files.map((f) => `- ${f.name} (${Math.max(1, Math.round(f.size / 1024))} KB)`).join("\n")
+      : "";
 
     const messages: Anthropic.MessageParam[] = [
       {
@@ -581,7 +674,9 @@ export async function runAgent(
         content:
           "Test case(s):\n\n```\n" +
           testCase +
-          "\n```\n\nFirst call set_plan — break into groups by test case (groups=[{title, steps}]) to show the plan. Then open the starting URL via navigate (browser starts at about:blank), handle login if needed, and execute steps in order, calling report_step with the sequential num for each. If an OTP is needed — ask_user. Finish with finish.",
+          "\n```" +
+          attachmentNote +
+          "\n\nFirst call set_plan — break into groups by test case (groups=[{title, steps}]) to show the plan. Then open the starting URL via navigate (browser starts at about:blank), handle login if needed, and execute steps in order, calling report_step with the sequential num for each. If an OTP is needed — ask_user. Finish with finish.",
       },
     ];
 
@@ -744,6 +839,8 @@ export async function runAgent(
   } finally {
     await browser?.close().catch(() => {});
     wakeLock?.kill();
+    // uploaded files only exist for the duration of the run
+    await cleanupUploads(runId);
   }
 }
 
