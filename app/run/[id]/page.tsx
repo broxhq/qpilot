@@ -23,6 +23,7 @@ import type {
   StepResult,
 } from "@/lib/types";
 import { updateFavicon, resetFavicon } from "@/lib/favicon";
+import { dict, type Dict } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,6 +82,8 @@ export default function RunPage({ params }: PageProps) {
     return () => es.close();
   }, [id]);
 
+  // the whole page speaks the language the test case was written in
+  const t = dict(run?.language);
   const status = run?.status ?? "running";
   const steps = run?.steps ?? [];
   const passN = steps.filter((s) => s.status === "pass").length;
@@ -146,14 +149,14 @@ export default function RunPage({ params }: PageProps) {
       <main className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
         <p className="text-6xl font-semibold text-muted-foreground/20 mb-4">404</p>
         <p className="text-sm text-muted-foreground mb-6">
-          Run not found — it may have finished and been cleared from memory.
+          {t.notFound}
         </p>
         <Link
           href="/"
           className="inline-flex items-center gap-1.5 text-sm text-foreground/70 hover:text-foreground transition-colors"
         >
           <ArrowLeft className="size-3.5" />
-          New run
+          {t.newRun}
         </Link>
       </main>
     );
@@ -167,12 +170,12 @@ export default function RunPage({ params }: PageProps) {
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-8"
       >
         <ArrowLeft className="size-3.5" />
-        Back
+        {t.back}
       </Link>
 
       {/* status header */}
       <section className="mb-8">
-        <BigStatus status={status} />
+        <BigStatus status={status} t={t} />
 
         <h1 className="text-lg font-semibold tracking-tight mt-5 break-words text-foreground/90">
           {run?.title ?? id}
@@ -183,14 +186,14 @@ export default function RunPage({ params }: PageProps) {
             <p className="text-xs text-muted-foreground font-mono">
               {steps.length > 0 ? (
                 <>
-                  <span className="text-foreground/60">{doneN}/{steps.length} steps</span>
-                  {passN > 0 && <span className="text-success ml-2">· {passN} passed</span>}
-                  {warnN > 0 && <span className="text-warning ml-2">· {warnN} warn</span>}
-                  {failN > 0 && <span className="text-destructive ml-2">· {failN} failed</span>}
+                  <span className="text-foreground/60">{doneN}/{steps.length} {t.steps}</span>
+                  {passN > 0 && <span className="text-success ml-2">· {passN} {t.passedCount}</span>}
+                  {warnN > 0 && <span className="text-warning ml-2">· {warnN} {t.warnCount}</span>}
+                  {failN > 0 && <span className="text-destructive ml-2">· {failN} {t.failedCount}</span>}
                 </>
               ) : (
                 <span className="text-muted-foreground/50">
-                  {isActive ? "waiting for plan…" : "no steps were run"}
+                  {isActive ? t.waitingForPlan : t.noSteps}
                 </span>
               )}
             </p>
@@ -204,8 +207,8 @@ export default function RunPage({ params }: PageProps) {
                   className="h-7 px-2 text-muted-foreground/60 hover:text-foreground"
                 >
                   {status === "paused"
-                    ? <><Play className="size-3.5 mr-1" />Resume</>
-                    : <><Pause className="size-3.5 mr-1" />Pause</>
+                    ? <><Play className="size-3.5 mr-1" />{t.resume}</>
+                    : <><Pause className="size-3.5 mr-1" />{t.pause}</>
                   }
                 </Button>
               )}
@@ -239,17 +242,17 @@ export default function RunPage({ params }: PageProps) {
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <Loader2 className="size-5 text-muted-foreground/30 animate-spin mb-3" />
               <p className="text-sm text-muted-foreground/50">
-                waiting for agent to start…
+                {t.waitingToStart}
               </p>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <CircleAlert className="size-5 text-muted-foreground/25 mb-3" />
               <p className="text-sm text-muted-foreground/50">
-                The run ended before the agent produced a plan.
+                {t.endedBeforePlan}
               </p>
               <p className="text-xs text-muted-foreground/35 mt-1">
-                See the reason below.
+                {t.seeReason}
               </p>
             </div>
           )
@@ -264,6 +267,7 @@ export default function RunPage({ params }: PageProps) {
             {g.steps.map((s, i) => (
               <div key={s.num} id={`step-${s.num}`} className="scroll-mt-6">
                 <StepCard
+                  t={t}
                   step={s}
                   displayNum={i + 1}
                   active={s.num === activeStepNum}
@@ -279,7 +283,7 @@ export default function RunPage({ params }: PageProps) {
       {run?.summary && (
         <div className="mt-6 rounded-xl border border-white/7 bg-card/60 px-4 py-3">
           <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40 mb-1.5">
-            Summary
+            {t.summary}
           </div>
           <div className="text-sm leading-relaxed text-foreground/80">{run.summary}</div>
         </div>
@@ -291,7 +295,7 @@ export default function RunPage({ params }: PageProps) {
           <div className="rounded-xl border border-white/7 bg-card/60 overflow-hidden">
             <CollapsibleTrigger className="group w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
-                Test case
+                {t.testCase}
               </span>
               <ChevronRight className="size-3.5 text-muted-foreground/30 group-data-open:hidden" />
               <ChevronDown className="size-3.5 text-muted-foreground/30 hidden group-data-open:inline" />
@@ -310,7 +314,7 @@ export default function RunPage({ params }: PageProps) {
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40 mr-1">
             <Paperclip className="size-3" />
-            Attached
+            {t.attached}
           </span>
           {run.attachments.map((a) => (
             <span
@@ -334,7 +338,7 @@ export default function RunPage({ params }: PageProps) {
       {/* question dialog */}
       <Dialog open={!!run?.pending}>
         <DialogContent showCloseButton={false}>
-          {run?.pending && <QuestionBody runId={id} question={run.pending} />}
+          {run?.pending && <QuestionBody runId={id} question={run.pending} t={t} />}
         </DialogContent>
       </Dialog>
     </main>
@@ -373,8 +377,6 @@ function StarCta() {
 
 
 interface StatusCfg {
-  label: string;
-  sub: string;
   icon: React.ReactNode;
   color: string;
   bg: string;
@@ -382,50 +384,39 @@ interface StatusCfg {
   ring?: string;
 }
 
+// only the visuals live here — label and sub come from the run's language
 const STATUS_CFG: Record<string, StatusCfg> = {
   running: {
-    label: "Running",
-    sub: "agent is executing steps",
     icon: <Loader2 className="size-4 animate-spin" />,
     color: "text-foreground/70",
     bg: "bg-white/5",
     border: "border-white/10",
   },
   waiting: {
-    label: "Waiting",
-    sub: "agent needs your input",
     icon: <CircleAlert className="size-4" />,
     color: "text-warning",
     bg: "bg-warning/10",
     border: "border-warning/20",
   },
   paused: {
-    label: "Paused",
-    sub: "run is paused",
     icon: <Pause className="size-4" />,
     color: "text-foreground/50",
     bg: "bg-white/5",
     border: "border-white/10",
   },
   passed: {
-    label: "Passed",
-    sub: "all steps passed",
     icon: <Check className="size-4" strokeWidth={2.5} />,
     color: "text-success",
     bg: "bg-success/10",
     border: "border-success/20",
   },
   failed: {
-    label: "Failed",
-    sub: "some steps failed",
     icon: <X className="size-4" strokeWidth={2.5} />,
     color: "text-destructive",
     bg: "bg-destructive/10",
     border: "border-destructive/20",
   },
   error: {
-    label: "Error",
-    sub: "agent crashed",
     icon: <CircleAlert className="size-4" />,
     color: "text-destructive",
     bg: "bg-destructive/10",
@@ -433,8 +424,9 @@ const STATUS_CFG: Record<string, StatusCfg> = {
   },
 };
 
-function BigStatus({ status }: { status: string }) {
+function BigStatus({ status, t }: { status: string; t: Dict }) {
   const v = STATUS_CFG[status] ?? STATUS_CFG.running;
+  const text = t.status[status] ?? t.status.running;
   return (
     <div className="flex items-center gap-3">
       <div
@@ -449,23 +441,20 @@ function BigStatus({ status }: { status: string }) {
       </div>
       <div>
         <div className={cn("text-sm font-semibold tracking-tight", v.color)}>
-          {v.label}
+          {text.label}
         </div>
-        <div className="text-xs text-muted-foreground/60">{v.sub}</div>
+        <div className="text-xs text-muted-foreground/60">{text.sub}</div>
       </div>
     </div>
   );
 }
 
-const STEP_ACCENT: Record<
-  string,
-  { border: string; badge: string; bg: string; label: string }
-> = {
-  queued:  { border: "border-l-white/8",       badge: "bg-white/5 text-muted-foreground/50",     bg: "",                       label: "queued" },
-  pass:    { border: "border-l-success/60",     badge: "bg-success/10 text-success",              bg: "",                       label: "pass" },
-  warn:    { border: "border-l-warning/60",     badge: "bg-warning/10 text-warning",              bg: "",                       label: "warn" },
-  fail:    { border: "border-l-destructive/60", badge: "bg-destructive/10 text-destructive",      bg: "bg-destructive/[0.03]",  label: "fail" },
-  skipped: { border: "border-l-white/8",        badge: "bg-white/4 text-muted-foreground/30",     bg: "",                       label: "skipped" },
+const STEP_ACCENT: Record<string, { border: string; badge: string; bg: string }> = {
+  queued:  { border: "border-l-white/8",       badge: "bg-white/5 text-muted-foreground/50",     bg: ""                      },
+  pass:    { border: "border-l-success/60",     badge: "bg-success/10 text-success",              bg: ""                      },
+  warn:    { border: "border-l-warning/60",     badge: "bg-warning/10 text-warning",              bg: ""                      },
+  fail:    { border: "border-l-destructive/60", badge: "bg-destructive/10 text-destructive",      bg: "bg-destructive/[0.03]" },
+  skipped: { border: "border-l-white/8",        badge: "bg-white/4 text-muted-foreground/30",     bg: ""                      },
 };
 
 const ACTIVE_ACCENT = {
@@ -492,11 +481,13 @@ function StepCard({
   events,
   active,
   displayNum,
+  t,
 }: {
   step: StepResult;
   events: RunEvent[];
   active: boolean;
   displayNum?: number;
+  t: Dict;
 }) {
   const base = STEP_ACCENT[step.status] ?? STEP_ACCENT.queued;
   const a = active ? { ...base, ...ACTIVE_ACCENT } : base;
@@ -525,10 +516,10 @@ function StepCard({
             {active ? (
               <>
                 <Loader2 className="size-2.5 animate-spin" />
-                running
+                {t.stepStatus.running}
               </>
             ) : (
-              base.label
+              t.stepStatus[step.status] ?? step.status
             )}
           </Badge>
           <span className="flex-1 min-w-0 text-[13px] text-foreground/80">
@@ -567,12 +558,12 @@ function StepCard({
             {logs.length > 0 ? (
               <div className="space-y-0.5">
                 {logs.map((e, i) => (
-                  <LogLine key={i} event={e} />
+                  <LogLine key={i} event={e} t={t} />
                 ))}
               </div>
             ) : (
               <div className="text-[11px] text-muted-foreground/30">
-                no events for this step
+                {t.noEvents}
               </div>
             )}
           </div>
@@ -582,42 +573,43 @@ function StepCard({
   );
 }
 
-function describeAction(name?: string, input?: unknown): string {
+function describeAction(name?: string, input?: unknown, t: Dict = dict("en")): string {
   const p = (input ?? {}) as Record<string, unknown>;
+  const a = t.action;
   switch (name) {
-    case "navigate": return `Opening ${p.url ?? ""}`;
-    case "snapshot": return p.near ? `Reading "${p.near}" block` : "Reading page";
-    case "click":    return p.name ? `Clicking "${p.name}"` : "Clicking element";
-    case "fill":     return p.name ? `Filling "${p.name}" → "${p.value ?? ""}"` : `Filling "${p.value ?? ""}"`;
-    case "select":   return p.name ? `Selecting "${p.value ?? ""}" in "${p.name}"` : `Selecting "${p.value ?? ""}"`;
-    case "hover":    return p.name ? `Hovering "${p.name}"` : "Hovering element";
-    case "scroll_to": return `Scrolling to ${p.text ? `"${p.text}"` : p.ref ?? "element"}`;
+    case "navigate": return `${a.opening} ${p.url ?? ""}`;
+    case "snapshot": return p.near ? `${a.readingBlock} "${p.near}"` : a.readingPage;
+    case "click":    return p.name ? `${a.clicking} "${p.name}"` : a.clickingElement;
+    case "fill":     return p.name ? `${a.filling} "${p.name}" → "${p.value ?? ""}"` : `${a.filling} "${p.value ?? ""}"`;
+    case "select":   return p.name ? `${a.selecting} "${p.value ?? ""}" — "${p.name}"` : `${a.selecting} "${p.value ?? ""}"`;
+    case "hover":    return p.name ? `${a.hovering} "${p.name}"` : a.hoveringElement;
+    case "scroll_to": return `${a.scrollingTo} ${p.text ? `"${p.text}"` : p.ref ?? ""}`;
     case "scroll": {
       const dirs = [
-        Number(p.y) ? `${Number(p.y) > 0 ? "down" : "up"} ${Math.abs(Number(p.y))}px` : "",
-        Number(p.x) ? `${Number(p.x) > 0 ? "right" : "left"} ${Math.abs(Number(p.x))}px` : "",
+        Number(p.y) ? `${Number(p.y) > 0 ? a.down : a.up} ${Math.abs(Number(p.y))}px` : "",
+        Number(p.x) ? `${Number(p.x) > 0 ? a.right : a.left} ${Math.abs(Number(p.x))}px` : "",
       ].filter(Boolean).join(", ");
-      const target = p.ref ? ` inside ${p.ref}` : "";
-      return `Scrolling ${dirs || "0px"}${target}`;
+      const target = p.ref ? ` ${a.inside} ${p.ref}` : "";
+      return `${a.scrolling} ${dirs || "0px"}${target}`;
     }
-    case "press":    return `Pressing ${p.key ?? ""}`;
-    case "upload_file": return `Uploading "${p.file ?? ""}"${p.name ? ` to "${p.name}"` : ""}`;
-    case "dismiss":  return "Closing overlay";
-    case "wait":     return `Waiting ${p.ms ?? ""} ms`;
-    case "ask_user": return "Asking user";
+    case "press":    return `${a.pressing} ${p.key ?? ""}`;
+    case "upload_file": return `${a.uploading} "${p.file ?? ""}"${p.name ? ` ${a.to} "${p.name}"` : ""}`;
+    case "dismiss":  return a.closingOverlay;
+    case "wait":     return `${a.waiting} ${p.ms ?? ""} ms`;
+    case "ask_user": return a.askingUser;
     default:         return name ?? "action";
   }
 }
 
-function renderLog(e: RunEvent): { icon: string; text: string; cls: string } {
+function renderLog(e: RunEvent, t: Dict): { icon: string; text: string; cls: string } {
   switch (e.kind) {
     case "action":
-      return { icon: "→", text: describeAction(e.toolName, e.toolInput), cls: "text-foreground/70" };
+      return { icon: "→", text: describeAction(e.toolName, e.toolInput, t), cls: "text-foreground/70" };
     case "step": {
       const s = e.step?.status ?? "";
       const cls = s === "pass" ? "text-success" : s === "fail" ? "text-destructive" : "text-warning";
       const icon = s === "pass" ? "✓" : s === "fail" ? "✗" : "!";
-      return { icon, text: `Step ${e.step?.num} — ${s.toUpperCase()}`, cls };
+      return { icon, text: `${t.stepLabel} ${e.step?.num} — ${(t.stepStatus[s] ?? s).toUpperCase()}`, cls };
     }
     case "observation": {
       const t = e.text ?? "";
@@ -625,13 +617,13 @@ function renderLog(e: RunEvent): { icon: string; text: string; cls: string } {
       return { icon: "·", text: t, cls: "text-muted-foreground/40" };
     }
     case "question":
-      return { icon: "?", text: `Asking: ${e.question?.prompt ?? ""}`, cls: "text-warning" };
+      return { icon: "?", text: `${t.asking}: ${e.question?.prompt ?? ""}`, cls: "text-warning" };
     case "answer":
-      return { icon: "✎", text: "User answered", cls: "text-foreground/50" };
+      return { icon: "✎", text: t.userAnswered, cls: "text-foreground/50" };
     case "thought":
       return { icon: "›", text: e.text ?? "", cls: "text-muted-foreground/40 italic" };
     case "done":
-      return { icon: "■", text: `Run finished — ${e.status ?? ""}`, cls: "text-foreground/60" };
+      return { icon: "■", text: `${t.runFinished} — ${t.status[e.status ?? ""]?.label ?? e.status ?? ""}`, cls: "text-foreground/60" };
     case "error":
       return { icon: "✗", text: e.text ?? "", cls: "text-destructive" };
     default:
@@ -639,8 +631,8 @@ function renderLog(e: RunEvent): { icon: string; text: string; cls: string } {
   }
 }
 
-function LogLine({ event }: { event: RunEvent }) {
-  const { icon, text, cls } = renderLog(event);
+function LogLine({ event, t }: { event: RunEvent; t: Dict }) {
+  const { icon, text, cls } = renderLog(event, t);
   const time = new Date(event.ts).toLocaleTimeString("en-US", { hour12: false });
   return (
     <div className="flex gap-2.5 text-[11.5px] leading-relaxed items-baseline font-mono">
@@ -656,9 +648,11 @@ function LogLine({ event }: { event: RunEvent }) {
 function QuestionBody({
   runId,
   question,
+  t,
 }: {
   runId: string;
   question: PendingQuestion;
+  t: Dict;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -691,7 +685,7 @@ function QuestionBody({
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2 text-base">
           <CircleAlert className="size-4 text-warning shrink-0" />
-          Agent needs input
+          {t.needInput}
         </DialogTitle>
       </DialogHeader>
       <p className="text-sm text-muted-foreground leading-relaxed">{question.prompt}</p>
@@ -700,12 +694,12 @@ function QuestionBody({
         type={question.secret ? "password" : "text"}
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder={question.secret ? "OTP / password" : "answer"}
+        placeholder={question.secret ? t.secretPlaceholder : t.answerPlaceholder}
         className="font-mono"
       />
       {error && <p className="text-destructive text-xs">{error}</p>}
       <Button type="submit" disabled={!value || busy} className="w-full">
-        {busy ? "Sending…" : "Submit"}
+        {busy ? t.sending : t.submit}
       </Button>
     </form>
   );

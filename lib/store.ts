@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { StoredFile } from "./attachments";
+import { detectLanguage } from "./i18n";
 import type { PendingQuestion, PlanGroup, Run, RunEvent } from "./types";
 
 // All state for one run lives in a single entry: the Run, its emitter, pending
@@ -40,6 +41,7 @@ export function createRun(
     status: "running",
     title,
     testCase,
+    language: detectLanguage(testCase),
     events: [],
     steps: [],
     attachments: files.map(({ name, size }) => ({ name, size })),

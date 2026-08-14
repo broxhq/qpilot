@@ -49,6 +49,8 @@ EFFICIENCY — you have a limited number of steps, do not waste them:
 - Call snapshot only for the FIRST page read, or to zoom into a block with near=.
 - Batch independent actions in ONE turn: e.g. emit several fill calls together to fill a form, then report. Fewer round-trips = more budget for real work.
 
+LANGUAGE — match the test case. Every human-readable string you write (plan step text, report_step description and evidence, finish summary, and any text you emit) MUST be in the SAME language the test case is written in. A Russian test case gets Russian descriptions, a Spanish one gets Spanish. This is what the person reading the report sees. Quotes taken from the page keep the page's own wording. Status values, tool names and refs stay as they are.
+
 Statuses: pass | fail | warn.
 Critical fail (login, form open, navigate without loading): finish immediately, do not report the rest.
 

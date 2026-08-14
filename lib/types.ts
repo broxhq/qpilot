@@ -63,6 +63,8 @@ export interface Run {
   status: RunStatus;
   title: string;
   testCase: string;
+  /** Language of the test case — the run page renders in it. See lib/i18n.ts. */
+  language: "ru" | "en";
   events: RunEvent[];
   steps: StepResult[];
   attachments: Attachment[];

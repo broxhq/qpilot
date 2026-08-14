@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDuration } from "@/lib/utils";
 import type { RunStatus } from "@/lib/types";
 import { updateFavicon, resetFavicon } from "@/lib/favicon";
+import { dict, type Lang } from "@/lib/i18n";
 
 type RunSummary = { id: string; createdAt: number; status: RunStatus; title: string };
 type MdFile = { name: string; file: File };
@@ -81,6 +82,14 @@ export default function Home() {
   const [batchItems, setBatchItems] = useState<BatchItem[]>(_batchItems);
   const [batchRunning, setBatchRunning] = useState(_batchRunning);
   const [now, setNow] = useState(() => Date.now());
+  // no test case yet on this page, so the browser locale is the only signal.
+  // set after mount to keep server and client markup identical.
+  const [lang, setLang] = useState<Lang>("en");
+  const t = dict(lang).home;
+
+  useEffect(() => {
+    if (navigator.language?.toLowerCase().startsWith("ru")) setLang("ru");
+  }, []);
 
   useEffect(() => {
     if (!batchRunning) return;
@@ -338,7 +347,7 @@ export default function Home() {
       </div>
 
       <h1 className="text-3xl font-semibold tracking-tight mb-2">QA Agent</h1>
-      <p className="text-sm text-muted-foreground mb-10">Paste a test case. Watch it run.</p>
+      <p className="text-sm text-muted-foreground mb-10">{t.tagline}</p>
 
       <div className={cn("w-full space-y-3", containerMaxW)}>
 
@@ -356,22 +365,22 @@ export default function Home() {
           <Button type="button" variant="outline" size="sm"
             onClick={() => folderInputRef.current?.click()}
             className="gap-2 text-muted-foreground hover:text-foreground">
-            <Folder className="size-4" />Choose folder
+            <Folder className="size-4" />{t.chooseFolder}
           </Button>
           <Button type="button" variant="outline" size="sm"
             onClick={() => fileInputRef.current?.click()}
             className="gap-2 text-muted-foreground hover:text-foreground">
-            <Upload className="size-4" />Upload .md
+            <Upload className="size-4" />{t.uploadMd}
           </Button>
 
           {mdFiles.length > 0 && (
             <>
               <span className="text-xs text-muted-foreground/60">
-                {mdFiles.length} .md file{mdFiles.length !== 1 ? "s" : ""}
+                {mdFiles.length} .md {t.files}
               </span>
               <Button type="button" variant="ghost" size="sm"
                 onClick={clearFolder}
-                title="Clear file list"
+                title={t.clearList}
                 className="ml-auto size-7 p-0 text-muted-foreground/50 hover:text-foreground">
                 <X className="size-3.5" />
               </Button>
@@ -393,7 +402,7 @@ export default function Home() {
                       ? <CheckSquare className="size-4 text-foreground/70" />
                       : <Square className="size-4" />}
                     <span className="text-[11px] text-muted-foreground/70 select-none">
-                      {checkedCount > 0 ? `${checkedCount} selected` : "Select all"}
+                      {checkedCount > 0 ? `${checkedCount} ${t.selected}` : t.selectAll}
                     </span>
                   </button>
 
@@ -403,13 +412,13 @@ export default function Home() {
                         className="h-7 gap-1.5 text-xs font-medium"
                         onClick={() => runBatch(true)}>
                         <ArrowRight className="size-3.5" />
-                        Run {checkedCount}
+                        {t.runN} {checkedCount}
                       </Button>
                       <Button type="button" size="sm" variant="secondary"
                         className="h-7 gap-1.5 text-xs"
                         onClick={() => runBatch(false)}>
                         <ArrowRight className="size-3.5" />
-                        With preview
+                        {t.withPreview}
                       </Button>
                     </div>
                   )}
@@ -420,7 +429,7 @@ export default function Home() {
                       <Button type="button" size="sm" variant="ghost"
                         className="h-7 text-xs text-destructive hover:text-destructive"
                         onClick={stopBatch}>
-                        Stop
+                        {t.stop}
                       </Button>
                     </div>
                   )}
@@ -452,7 +461,7 @@ export default function Home() {
             {batchItems.length > 0 && (
               <div className={PANEL}>
                 <div className={cn(PANEL_HEAD, "flex items-center gap-2")}>
-                  <span className={SECTION_LABEL}>Batch run</span>
+                  <span className={SECTION_LABEL}>{t.batchRun}</span>
                   {_batchStartedAt && (
                     <span className="ml-auto text-[11px] font-mono tabular-nums text-muted-foreground/40">
                       {formatDuration((_batchFinishedAt ?? now) - _batchStartedAt)}
@@ -504,7 +513,7 @@ export default function Home() {
             )}>
               <Textarea
                 ref={textareaRef}
-                placeholder="Paste your test case here…"
+                placeholder={t.placeholder}
                 value={text}
                 onChange={e => setTextSaved(e.target.value)}
                 onFocus={() => setFocused(true)}
@@ -527,24 +536,24 @@ export default function Home() {
                   onClick={() => setTextExpanded(v => !v)}
                   className="absolute bottom-2 right-3 flex items-center gap-1 rounded-md border border-white/10 bg-background/80 backdrop-blur px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
                   {textExpanded
-                    ? <><ChevronUp className="size-3.5" />Collapse</>
-                    : <><ChevronDown className="size-3.5" />Expand</>}
+                    ? <><ChevronUp className="size-3.5" />{t.collapse}</>
+                    : <><ChevronDown className="size-3.5" />{t.expand}</>}
                 </button>
               )}
             </div>
 
             <div className="flex items-center gap-2">
               <Button type="submit" disabled={!text.trim() || busy} size="lg" className="gap-2 font-medium">
-                {busy ? "Running…" : <><ArrowRight className="size-4" />Run</>}
+                {busy ? t.running : <><ArrowRight className="size-4" />{t.run}</>}
               </Button>
               <Button type="button" disabled={!text.trim() || busy} size="lg" variant="secondary"
                 onClick={() => startRun(false)} className="gap-2">
-                {busy ? "Running…" : <><ArrowRight className="size-4" />Run with preview</>}
+                {busy ? t.running : <><ArrowRight className="size-4" />{t.runPreview}</>}
               </Button>
               <Button type="button" variant="ghost" size="lg"
                 onClick={() => setTextSaved(EXAMPLE)}
                 className="ml-auto text-muted-foreground hover:text-foreground">
-                <FileText className="size-4" />Example
+                <FileText className="size-4" />{t.example}
               </Button>
             </div>
           </form>
@@ -553,6 +562,7 @@ export default function Home() {
 
         {/* attachments — shared by single and batch runs */}
         <AttachmentsPanel
+          t={dict(lang).home}
           files={attachments}
           onPick={() => attachInputRef.current?.click()}
           onRemove={removeAttachment}
@@ -569,7 +579,7 @@ export default function Home() {
       {/* history */}
       {history.length > 0 && (
         <div className={cn("w-full mt-12", containerMaxW)}>
-          <div className={cn(SECTION_LABEL, "mb-3")}>Recent runs</div>
+          <div className={cn(SECTION_LABEL, "mb-3")}>{t.recentRuns}</div>
           <ul className="space-y-1.5">
             {history.map(run => (
               <li key={run.id}>
@@ -598,10 +608,12 @@ function AttachmentsPanel({
   files,
   onPick,
   onRemove,
+  t,
 }: {
   files: File[];
   onPick: () => void;
   onRemove: (name: string) => void;
+  t: ReturnType<typeof dict>["home"];
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -609,12 +621,12 @@ function AttachmentsPanel({
         onClick={onPick}
         className="gap-2 text-muted-foreground/70 hover:text-foreground">
         <Paperclip className="size-3.5" />
-        {files.length ? "Add file" : "Attach files"}
+        {files.length ? t.addFile : t.attach}
       </Button>
 
       {files.length === 0 ? (
         <span className="text-[11px] text-muted-foreground/35">
-          optional — images, CSV or documents the test needs to upload
+          {t.attachHint}
         </span>
       ) : (
         files.map(f => (
@@ -627,7 +639,7 @@ function AttachmentsPanel({
               {formatSize(f.size)}
             </span>
             <button type="button" onClick={() => onRemove(f.name)}
-              title={`Remove ${f.name}`}
+              title={`${t.remove} ${f.name}`}
               className="rounded p-0.5 text-muted-foreground/40 hover:text-destructive transition-colors">
               <X className="size-3" />
             </button>
