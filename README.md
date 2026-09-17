@@ -113,6 +113,10 @@ provider you can skip setup entirely with an `ANTHROPIC_API_KEY` env var or a
 - Runs are held in memory, last 50 only — restarting the server clears them.
 - A genuinely broken page still fails the run. That is the point.
 
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ---
 
 <p align="center">
