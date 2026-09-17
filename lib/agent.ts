@@ -59,7 +59,7 @@ DO NOT HALLUCINATE:
 - evidence — verbatim quote from the snapshot.
 - No element → fail, do not invent.
 
-Elements: ref=[eN] is required for click/fill/select/hover, taken from the MOST RECENT snapshot (including the one your last action returned). Older refs are stale.
+Elements: ref=[eN] is required for click/fill/select/hover, taken from the MOST RECENT snapshot (including the one your last action returned). Older refs are stale. An element inside an iframe has a frame-prefixed ref like [ref=f1e2] instead of [ref=eN] — the snapshot already includes iframe content, use that ref exactly as shown, no special handling needed.
 For <select> dropdowns use select, not click.
 If a click fails with "intercepts pointer events", an open overlay (dropdown/popover) is covering the target: call dismiss to click an empty corner (closes it), then snapshot and retry. Custom dropdowns usually ignore Escape.
 
@@ -72,7 +72,7 @@ Scrolling:
 - scroll_to(text or ref) — auto-scrolls whatever container holds the target (page, inner div, or sideways) until it's visible.
 - scroll(y, x?, ref?) for pixel scrolling. No ref = main window. To scroll a block INSIDE the page (list, panel, modal body with its own scrollbar), pass ref of ANY element inside that block — the scrollable container is found automatically. Use x for horizontal (carousels, wide tables).
 - scroll returns position and limits (e.g. "Vertical 800/2400px") and flags edges/no-movement — read it: if the window didn't move, content is in an inner block, retry with a ref inside it.
-Do not write [ref=eN] in description/evidence.
+Do not write [ref=eN] or [ref=f1eN] in description/evidence.
 
 Uploading files: when a step needs a file (photo, CSV, document), use upload_file with the name of a file attached to this run — never type a path into a text field. The <input type=file> is usually hidden and absent from the snapshot, so call upload_file WITHOUT ref first; pass ref (of the visible "Choose file" button or dropzone) only if that fails. Never ask_user for a file.
 You CANNOT see what is inside an attached file — you only hand it to the page. You know its name and size, nothing else. So:
@@ -101,13 +101,17 @@ interface ToolResult {
   finished?: boolean;
 }
 
+// Playwright prefixes refs of elements inside a (same-origin) iframe with the
+// iframe's frame sequence, e.g. "f1e2" — plain "e12" is only the main frame.
+const REF_RE = /^(?:f\d+)?e\d+$/;
+
 async function locate(
   page: Page,
   input: Record<string, unknown>,
 ): Promise<Locator> {
   const ref = typeof input.ref === "string" ? input.ref.trim() : "";
-  if (!/^e\d+$/.test(ref)) {
-    throw new Error("provide a ref from the latest snapshot (e.g. e12)");
+  if (!REF_RE.test(ref)) {
+    throw new Error("provide a ref from the latest snapshot (e.g. e12 or f1e2 for an element inside an iframe)");
   }
   const loc = page.locator(`aria-ref=${ref}`);
   if ((await loc.count()) === 0) {
@@ -116,7 +120,7 @@ async function locate(
   return loc;
 }
 
-const stripRefs = (t: string): string => t.replace(/\s*\[ref=e\d+\]/g, "");
+const stripRefs = (t: string): string => t.replace(/\s*\[ref=(?:f\d+)?e\d+\]/g, "");
 
 // Wraps click/fill: when an overlay intercepts the click ("intercepts pointer
 // events"), return a short directive instead of Playwright's wall of log text —
@@ -374,7 +378,7 @@ async function executeTool(
       const text = String(input.text ?? "");
       let loc: Locator;
       let label: string;
-      if (/^e\d+$/.test(ref)) {
+      if (REF_RE.test(ref)) {
         loc = page.locator(`aria-ref=${ref}`);
         label = `ref ${ref}`;
         if ((await loc.count()) === 0) {
@@ -402,7 +406,7 @@ async function executeTool(
       const ref = typeof input.ref === "string" ? input.ref.trim() : "";
 
       let res: ScrollResult;
-      if (/^e\d+$/.test(ref)) {
+      if (REF_RE.test(ref)) {
         const loc = page.locator(`aria-ref=${ref}`);
         if ((await loc.count()) === 0) {
           return { content: `ref ${ref} not found — take a fresh snapshot` };
@@ -449,7 +453,7 @@ async function executeTool(
       }
 
       const ref = typeof input.ref === "string" ? input.ref.trim() : "";
-      if (/^e\d+$/.test(ref)) {
+      if (REF_RE.test(ref)) {
         const loc = page.locator(`aria-ref=${ref}`);
         if ((await loc.count()) === 0) {
           return { content: `ref ${ref} not found — take a fresh snapshot` };
