@@ -59,6 +59,8 @@ DO NOT HALLUCINATE:
 - evidence — verbatim quote from the snapshot.
 - No element → fail, do not invent.
 
+SIDE EFFECTS — never repeat a submitting action. Buttons that save, create, submit, send, pay, delete or confirm change data on the server: click such a button ONCE per step. If the page then shows an error, a timeout, "session expired" or no confirmation, do NOT click it again — report the step as fail with the page's message as evidence. The request may have gone through even though the UI says it failed, and every retry can create a duplicate record. Repeat a submit only if the test case explicitly tells you to.
+
 Elements: ref=[eN] is required for click/fill/select/hover, taken from the MOST RECENT snapshot (including the one your last action returned). Older refs are stale. An element inside an iframe has a frame-prefixed ref like [ref=f1e2] instead of [ref=eN] — the snapshot already includes iframe content, use that ref exactly as shown, no special handling needed.
 For <select> dropdowns use select, not click.
 If a click fails with "intercepts pointer events", an open overlay (dropdown/popover) is covering the target: call dismiss to click an empty corner (closes it), then snapshot and retry. Custom dropdowns usually ignore Escape.
