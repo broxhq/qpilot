@@ -26,6 +26,13 @@ the UI in your browser.
 **Needs:** Node.js 20.12+, Google Chrome, and an [Anthropic API key](https://console.anthropic.com)
 — or any OpenAI-compatible endpoint (Qwen, vLLM, Ollama, a corporate gateway).
 
+**Prefer a desktop app?** There's a community build for macOS and Windows, maintained in
+[Lord-of-world/qpilot](https://github.com/Lord-of-world/qpilot) rather than in this repo:
+[macOS Apple Silicon](https://github.com/Lord-of-world/qpilot/releases/latest/download/qpilot-mac-arm64.dmg) ·
+[macOS Intel](https://github.com/Lord-of-world/qpilot/releases/latest/download/qpilot-mac-x64.dmg) ·
+[Windows](https://github.com/Lord-of-world/qpilot/releases/latest/download/qpilot-win-x64.exe)
+([all releases](https://github.com/Lord-of-world/qpilot/releases)).
+
 ## How it works
 
 1. Paste a plain-text test case — the messy kind a PM writes in Confluence is fine.
