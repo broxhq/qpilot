@@ -75,6 +75,32 @@ export interface Dict {
     attachHint: string;
     remove: string;
     settings: string;
+    gitRepos: string;
+    addRepo: string;
+    noRepos: string;
+    confirmRemoveRepo: string;
+    syncRepo: string;
+    updatedAt: string;
+    noMdFiles: string;
+    repoUrl: string;
+    repoUrlHint: string;
+    branch: string;
+    branchHint: string;
+    folder: string;
+    folderHint: string;
+    token: string;
+    tokenHint: string;
+    username: string;
+    usernameHint: string;
+    optional: string;
+    cancel: string;
+    connect: string;
+    connecting: string;
+    switchBranch: string;
+    branchSearch: string;
+    branchesLoading: string;
+    noBranches: string;
+    branchDefault: string;
   };
   settings: {
     title: string;
@@ -202,6 +228,32 @@ const en: Dict = {
     attachHint: "optional — images, CSV or documents the test needs to upload",
     remove: "Remove",
     settings: "Settings",
+    gitRepos: "Git repositories",
+    addRepo: "Connect repository",
+    noRepos: "No repositories connected yet",
+    confirmRemoveRepo: "Remove {name} from qpilot? Only the local copy is deleted — the repository itself is not touched.",
+    syncRepo: "Pull latest changes",
+    updatedAt: "updated",
+    noMdFiles: "No .md files in this repository",
+    repoUrl: "Repository URL",
+    repoUrlHint: "HTTPS or SSH, e.g. https://github.com/team/tests.git or git@github.com:team/tests.git",
+    branch: "Branch",
+    branchHint: "empty = default branch",
+    folder: "Test cases folder",
+    folderHint: "empty = whole repository",
+    token: "Access token",
+    tokenHint: "only for a private repository over HTTPS — an SSH URL uses your SSH key instead",
+    username: "Username",
+    usernameHint: "only if your Git host needs it together with the token (e.g. Bitbucket)",
+    optional: "optional",
+    cancel: "Cancel",
+    connect: "Connect",
+    connecting: "Cloning…",
+    switchBranch: "Switch branch",
+    branchSearch: "Find a branch…",
+    branchesLoading: "Loading branches…",
+    noBranches: "No matching branches",
+    branchDefault: "default",
   },
   stepStatus: {
     queued: "queued",
@@ -337,6 +389,32 @@ const ru: Dict = {
     attachHint: "необязательно — картинки, CSV или документы, которые нужно загрузить в тесте",
     remove: "Убрать",
     settings: "Настройки",
+    gitRepos: "Git-репозитории",
+    addRepo: "Подключить репозиторий",
+    noRepos: "Пока нет подключённых репозиториев",
+    confirmRemoveRepo: "Убрать {name} из qpilot? Удалится только локальная копия — сам репозиторий не изменится.",
+    syncRepo: "Подтянуть последние изменения",
+    updatedAt: "обновлено",
+    noMdFiles: "В репозитории нет .md-файлов",
+    repoUrl: "Адрес репозитория",
+    repoUrlHint: "HTTPS или SSH, например https://github.com/team/tests.git или git@github.com:team/tests.git",
+    branch: "Ветка",
+    branchHint: "пусто — основная ветка",
+    folder: "Папка с тестами",
+    folderHint: "пусто — весь репозиторий",
+    token: "Токен доступа",
+    tokenHint: "только для приватного репозитория по HTTPS — SSH-адрес использует ваш SSH-ключ",
+    username: "Имя пользователя",
+    usernameHint: "только если Git-хостинг требует его вместе с токеном (например, Bitbucket)",
+    optional: "необязательно",
+    cancel: "Отмена",
+    connect: "Подключить",
+    connecting: "Клонирую…",
+    switchBranch: "Сменить ветку",
+    branchSearch: "Найти ветку…",
+    branchesLoading: "Загружаю ветки…",
+    noBranches: "Подходящих веток нет",
+    branchDefault: "основная",
   },
   stepStatus: {
     queued: "в очереди",

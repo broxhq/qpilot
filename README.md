@@ -83,6 +83,25 @@ can upload them, but never sees what is inside them.
 want and run them as a batch — one after another, with live status and timing, and
 a **Stop** button. Finished runs land under **Recent runs**.
 
+## Test cases from Git
+
+Keep test cases in a repository and point qpilot at it: the **Git** button on the
+home page connects a repo and lists its `.md` files the same way **Choose folder**
+does — open one, or tick several and run them as a batch.
+
+- Any HTTPS or SSH URL works (`https://github.com/team/tests.git`,
+  `git@github.com:team/tests.git`). Optionally pick a branch and a folder inside
+  the repo.
+- Private repos: an SSH URL uses your existing SSH key; for HTTPS, give an access
+  token with read access.
+- Connected repos are saved, so switching between them is one click. Picking a repo
+  pulls its latest commit in the background; the ↻ button pulls on demand.
+- Click the branch name next to the repo to switch branches — the list comes
+  live from the remote, with a filter. qpilot remembers the branch per repo.
+- qpilot only reads: it keeps a shallow clone under `~/.qpilot/repos/` and never
+  commits or pushes. Removing a repo deletes just that local copy.
+- Needs `git` installed (on macOS: `xcode-select --install`).
+
 ## Models
 
 Open **Settings** (top right of the home page) to pick the provider, paste the API
