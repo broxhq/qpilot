@@ -29,6 +29,8 @@ import {
 const MAX_ITERATIONS = 200;
 const STUCK_WINDOW = 24;
 const STUCK_DISTINCT = 4;
+// Actions on a single step before the agent is told to wrap it up.
+const STEP_ACTION_BUDGET = 15;
 const CONTEXT_BUDGET_CHARS = 64_000;
 const KEEP_RECENT_TOOL_MSGS = 3;
 const MAX_RETRIES = 5;
@@ -51,6 +53,14 @@ EFFICIENCY — you have a limited number of steps, do not waste them:
 - Batch independent actions in ONE turn: e.g. emit several fill calls together to fill a form, then report. Fewer round-trips = more budget for real work.
 
 LANGUAGE — match the test case. Every human-readable string you write (plan step text, report_step description and evidence, finish summary, and any text you emit) MUST be in the SAME language the test case is written in. A Russian test case gets Russian descriptions, a Spanish one gets Spanish. This is what the person reading the report sees. Quotes taken from the page keep the page's own wording. Status values, tool names and refs stay as they are.
+
+SCOPE — do exactly what the step says and nothing else:
+- Perform the actions the step names, check the expected result it names, report, move on. No extra checks, no exploring, no "while I'm here".
+- Do NOT restore, undo or clean up anything unless the test case tells you to. A switch you toggled stays toggled.
+- Follow the step literally: "click 400 px to the right of X" means click with dx=400, not a click on X or on its row.
+- If a step cannot be done as written, report it (fail, or warn when the outcome is unclear) and say why — do not replace it with a different action.
+- A step that fails is reported as fail right away: do not keep trying variations to turn it into a pass.
+- report_step.description: one short line, what was done. No URLs, ids or element internals.
 
 Statuses: pass | fail | warn.
 Critical fail (login, form open, navigate without loading): finish immediately, do not report the rest.
@@ -146,8 +156,11 @@ async function locate(
   return loc;
 }
 
-// Models copy refs out of the snapshot in both forms: [ref=e12] and bare [e12].
-const stripRefs = (t: string): string => t.replace(/\s*\[(?:ref=)?(?:f\d+)?e\d+\]/g, "");
+// Models copy refs out of the snapshot in every form: [ref=e12], [e12], (e12), "row e12".
+const stripRefs = (t: string): string =>
+  t
+    .replace(/\s*[[(](?:ref=)?(?:f\d+)?e\d+[\])]/g, "")
+    .replace(/(^|\s)(?:ref=)?(?:f\d+)?e\d{1,6}(?=[\s.,;:)]|$)/g, "");
 
 const SECRET_MASK = "••••••";
 
@@ -485,6 +498,29 @@ async function executeTool(
 
     case "click": {
       const loc = await locate(page, input);
+      const dx = Number(input.dx) || 0;
+      const dy = Number(input.dy) || 0;
+      if (dx !== 0 || dy !== 0) {
+        // a click NEXT TO the element: a raw mouse click at a point, so it lands
+        // on whatever is there — which is the whole point of the check
+        await loc.scrollIntoViewIfNeeded({ timeout: 5000 });
+        const box = await loc.boundingBox();
+        if (!box) throw new Error(`${input.ref} is not visible — cannot click next to it`);
+        const x = Math.round(box.x + box.width / 2 + dx);
+        const y = Math.round(box.y + box.height / 2 + dy);
+        const view = page.viewportSize() ?? { width: 1440, height: 900 };
+        if (x < 0 || y < 0 || x >= view.width || y >= view.height) {
+          return {
+            content: `Error: the point (${x}, ${y}) is outside the ${view.width}×${view.height} viewport. The element's centre is at (${Math.round(box.x + box.width / 2)}, ${Math.round(box.y + box.height / 2)}) — use a smaller offset.`,
+          };
+        }
+        await page.mouse.click(x, y);
+        await page.waitForTimeout(150).catch(() => {});
+        return actionResult(
+          ctx,
+          `OK: clicked at (${x}, ${y}) — ${dx}px right / ${dy}px down from the centre of ${input.name ?? input.ref}`,
+        );
+      }
       await clickWithHint(() => loc.click({ timeout: 5000 }));
       // a click that opens a new tab resolves before the tab is announced
       await page.waitForTimeout(150).catch(() => {});
@@ -749,7 +785,26 @@ async function executeTool(
 
     case "report_step": {
       const status = input.status as ReportStatus;
-      const num = Number(input.num);
+      // The model sometimes sends no num, a null or a number outside the plan.
+      // Taken at face value that step lands outside the plan as a stray card and
+      // every later event loses its step, so fall back to the next unreported one.
+      const plan = getRun(runId)?.steps ?? [];
+      let num = Number(input.num);
+      if (!Number.isInteger(num) || (plan.length > 0 && !plan.some((s) => s.num === num))) {
+        num = ctx.step.current;
+      }
+      const planned = plan.find((s) => s.num === num);
+      if (plan.length > 0 && !planned) {
+        return {
+          content: `Error: the plan has ${plan.length} steps and all of them are reported. Call finish.`,
+        };
+      }
+      if (planned && planned.status !== "queued") {
+        const next = plan.find((s) => s.status === "queued");
+        return {
+          content: `Error: step ${num} is already reported as ${planned.status} — each step is reported exactly once. ${next ? `Go on with step ${next.num}: "${next.description}".` : "All steps are reported — call finish."}`,
+        };
+      }
       // JPEG goes to the store and is served via a separate GET — never inlined in events/SSE
       let screenshot: string | undefined;
       if (status === "fail" || status === "warn") {
@@ -776,8 +831,12 @@ async function executeTool(
         mockUnverified: ctx.net.takeUnverifiedMockHits() > 0 || undefined,
       };
       pushEvent(runId, { ts: Date.now(), kind: "step", step, stepNum: num });
-      ctx.step.current = num + 1;
-      return { content: `OK: step ${step.num} = ${step.status}` };
+      // the next step to work on is the first one still queued, not blindly num + 1
+      const upcoming = plan.find((s) => s.num !== num && s.status === "queued");
+      ctx.step.current = upcoming?.num ?? num + 1;
+      return {
+        content: `OK: step ${step.num} = ${step.status}. ${upcoming ? `Next: step ${upcoming.num} — "${upcoming.description}".` : "That was the last step — call finish."}`,
+      };
     }
 
     case "finish": {
@@ -965,6 +1024,8 @@ export async function runAgent(
     // means the agent is stuck.
     let lastStep = ctx.step.current;
     let sigsSinceProgress: string[] = [];
+    let budgetStep = ctx.step.current;
+    let actionsOnStep = 0;
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       await checkPause(runId);
@@ -1031,6 +1092,21 @@ export async function runAgent(
         const input = (b.input ?? {}) as Record<string, unknown>;
 
         sigsSinceProgress.push(actionSig(name, input));
+
+        // A step that eats dozens of actions means the agent has wandered off
+        // (extra checks, undoing its own clicks). Pull it back to the report.
+        if (ctx.step.current !== budgetStep) {
+          budgetStep = ctx.step.current;
+          actionsOnStep = 0;
+        }
+        if (name !== "report_step" && name !== "set_plan" && name !== "finish") {
+          actionsOnStep++;
+          if (actionsOnStep === STEP_ACTION_BUDGET || (actionsOnStep > STEP_ACTION_BUDGET && actionsOnStep % 10 === 0)) {
+            ctx.notices.push(
+              `You have spent ${actionsOnStep} actions on step ${ctx.step.current}. Do only what the step asks. If its expected result is not there by now, report the step as fail (or warn) with what you observed and go on — do not keep trying.`,
+            );
+          }
+        }
 
         // a value typed into a password field must not show up in the log
         if (name === "fill" && typeof input.value === "string" && input.value) {

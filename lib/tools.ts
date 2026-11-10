@@ -73,12 +73,15 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "click",
-    description: "Click an element. ref from snapshot is required (e.g. e12).",
+    description:
+      "Click an element. ref from snapshot is required (e.g. e12). By default the click lands on the element's centre. To click NEXT TO an element — empty space to the right of a switch, a point left of a label — pass dx/dy: the click then lands that many pixels away from the element's centre, on whatever is there.",
     input_schema: {
       type: "object",
       properties: {
         ref: { type: "string", description: "Element ref from snapshot, e.g. e12" },
         name: { type: "string", description: "Human-readable label for the log, e.g. 'Login button'" },
+        dx: { type: "number", description: "Horizontal offset from the element's centre in px: positive = right, negative = left." },
+        dy: { type: "number", description: "Vertical offset from the element's centre in px: positive = down, negative = up." },
       },
       required: ["ref"],
     },
