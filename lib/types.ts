@@ -6,8 +6,14 @@ export interface StepResult {
   num: number;
   description: string;
   status: StepStatus;
+  /** Expected result as the test case states it; `evidence` is what was actually seen. */
+  expected?: string;
   evidence?: string;
   screenshot?: string;
+  /** JS console errors logged while the step ran — shown as a note, never changes the status. */
+  consoleErrors?: string[];
+  /** A mock with a guessed response shape answered a request on this step. */
+  mockUnverified?: boolean;
   group?: string;
 }
 
@@ -38,6 +44,7 @@ export interface RunEvent {
     | "thought"
     | "action"
     | "observation"
+    | "info"
     | "plan"
     | "step"
     | "question"
@@ -55,6 +62,10 @@ export interface RunEvent {
   summary?: string;
   question?: PendingQuestion;
   stepNum?: number;
+  /** For kind "info": what happened on its own, so the UI can say it in the run's language. */
+  info?:
+    | { type: "newTab" | "tabClosed"; url: string }
+    | { type: "dialog"; dialog: string; message: string; accepted: boolean };
 }
 
 export interface Run {
@@ -65,6 +76,8 @@ export interface Run {
   testCase: string;
   /** Language of the test case — the run page renders in it. See lib/i18n.ts. */
   language: "ru" | "en";
+  /** false = the run was started with a visible browser ("Run with preview"). */
+  headless: boolean;
   events: RunEvent[];
   steps: StepResult[];
   attachments: Attachment[];

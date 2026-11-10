@@ -77,6 +77,40 @@ control on the page — including the hidden `<input type=file>` behind a styled
 Files live only for the duration of the run and are deleted when it ends. The agent
 can upload them, but never sees what is inside them.
 
+## Mocking and inspecting requests
+
+What you would do with Charles or the DevTools Network tab is one line of the test case:
+
+```
+3. Replace the response of GET /api/cart with an empty list and open the cart.
+   Expected: the "Your cart is empty" placeholder is shown.
+4. Make POST /api/orders return 500 and click "Place order".
+   Expected: an error message is shown.
+5. Place the order for real.
+   Expected: POST /api/orders was sent with amount=3980 and returned 201.
+```
+
+The agent can answer a request with made-up data (it invents a realistic body when
+you give none), patch one field of the real response, fail or delay a request, go
+offline, and read back what the page actually sent and received. JavaScript console
+errors are noted on the step where they happened.
+
+Tokens, passwords and cookies in request and response bodies are masked before the
+model or the report sees them.
+
+## Tabs, dialogs and passwords
+
+- A link that opens a new tab moves the agent to that tab; it can switch back.
+- Native `alert` / `confirm` / `prompt` dialogs are accepted by default. Write "press
+  Cancel" in the step and the agent dismisses the dialog instead.
+- Whatever is typed into a password field is masked in the log and the report.
+
+## The report
+
+A failed step shows **Expected** next to **Actual**, with a screenshot. When the run
+ends you can **Copy report** (Markdown, for a ticket), **Download report** (one HTML
+file with screenshots inside), **Run again**, or **Edit test case** and rerun.
+
 ## A folder of test cases
 
 **Choose folder** points qpilot at a directory of `.md` files. Tick the ones you

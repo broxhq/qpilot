@@ -191,6 +191,89 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "switch_tab",
+    description:
+      "Switch to another open browser tab. When an action opens a new tab you are moved to it automatically; use this to go back (or forward). The list of open tabs with their numbers is shown in action results whenever more than one tab is open.",
+    input_schema: {
+      type: "object",
+      properties: {
+        index: { type: "number", description: "Tab number from the list, starting at 1." },
+      },
+      required: ["index"],
+    },
+  },
+  {
+    name: "handle_dialog",
+    description:
+      "Decide what happens to the NEXT native browser dialog (alert / confirm / prompt). By default every dialog is accepted (OK) and its text is reported to you. Call this BEFORE the action that opens the dialog when the test case says to press Cancel, or to type a value into a prompt.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["accept", "dismiss"], description: "accept = OK, dismiss = Cancel." },
+        text: { type: "string", description: "Text to type into a prompt() dialog before accepting." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "mock_request",
+    description:
+      "Intercept network requests matching a URL and control the response, the way a tester does with Charles or DevTools. Call it BEFORE the action that triggers the request. Modes: (1) status and/or body — answer with a made-up response without hitting the server; invent realistic body data in the shape the page expects when the test case gives none; (2) patch — let the real request through and merge fields into the real JSON response (the most reliable way to change one field); (3) abort — fail the request with a network error. delay_ms slows the request down and can be combined with any mode or used alone. Mocks stay active until clear_mocks.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Part of the request URL ('/api/cart'), or a glob with * ('*/orders/*').",
+        },
+        method: { type: "string", description: "Only this HTTP method (GET, POST, …). Omit for any." },
+        status: { type: "number", description: "HTTP status to answer with, e.g. 500. Defaults to 200 when body is given." },
+        body: { type: "string", description: "Response body to answer with — usually a JSON string." },
+        content_type: { type: "string", description: "Content-Type of body. Defaults to application/json for JSON, else text/plain." },
+        patch: {
+          type: "object",
+          description: "JSON merged into the REAL response: objects merge recursively, lists and values are replaced. If the response is a list, the patch is applied to every item.",
+        },
+        abort: { type: "boolean", description: "true = the request fails with a network error." },
+        delay_ms: { type: "number", description: "Delay before the response, in ms (max 30000)." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "clear_mocks",
+    description: "Remove all mocks installed with mock_request; requests go to the real server again. Also reports how many requests each mock matched.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "set_offline",
+    description: "Turn the browser's network off or back on, to check how the page behaves without a connection.",
+    input_schema: {
+      type: "object",
+      properties: { offline: { type: "boolean" } },
+      required: ["offline"],
+    },
+  },
+  {
+    name: "get_requests",
+    description:
+      "List recent network requests the page made (XHR/fetch calls and page loads) — the Network tab: method, URL, status, request body and JSON response body. Use it to verify that a request was sent with the right data, or that the server answered with the expected status. Secrets are masked.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Only requests whose URL contains this text (or matches this glob)." },
+        method: { type: "string", description: "Only this HTTP method." },
+        failed_only: { type: "boolean", description: "Only requests that failed or returned 4xx/5xx." },
+        limit: { type: "number", description: "How many of the latest matches to return (default 15)." },
+      },
+    },
+  },
+  {
+    name: "get_console",
+    description: "JavaScript errors from the browser console for the whole run (console.error and uncaught exceptions).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "ask_user",
     description:
       "Ask the user for ONE specific value needed right now (OTP/SMS code, captcha, phone number for login). Use ONLY when the value is not in the test case and the agent cannot know it. prompt must describe exactly the field currently on screen (by its label/placeholder from the snapshot).",
@@ -222,9 +305,13 @@ export const TOOLS: Anthropic.Tool[] = [
         },
         description: { type: "string", description: "Brief description of what was checked." },
         status: { type: "string", enum: ["pass", "fail", "warn"] },
+        expected: {
+          type: "string",
+          description: "Expected result of this step, copied from the test case. Omit if the test case states none.",
+        },
         evidence: {
           type: "string",
-          description: "What was observed — actual result, verbatim text quote, console error.",
+          description: "Actual result — what was observed: verbatim text quote from the page, request status, dialog text.",
         },
       },
       required: ["num", "description", "status"],
@@ -237,7 +324,7 @@ export const TOOLS: Anthropic.Tool[] = [
       type: "object",
       properties: {
         status: { type: "string", enum: ["passed", "failed"] },
-        summary: { type: "string", description: "1-3 sentences about the results." },
+        summary: { type: "string", description: "1-3 sentences about the results, written in the same language as the test case." },
       },
       required: ["status", "summary"],
     },

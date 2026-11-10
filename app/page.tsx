@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Bot, FileText, ArrowRight, Upload, Folder, X,
   Check, CircleAlert, Clock, Loader2, Square, CheckSquare,
-  ChevronDown, ChevronUp, Paperclip, Settings as SettingsIcon,
+  ChevronDown, ChevronUp, Eye, Paperclip, Settings as SettingsIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,7 +14,6 @@ import { cn, formatDuration } from "@/lib/utils";
 import type { RunStatus } from "@/lib/types";
 import { updateFavicon, resetFavicon } from "@/lib/favicon";
 import { dict, type Lang } from "@/lib/i18n";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 type RunSummary = { id: string; createdAt: number; status: RunStatus; title: string };
 type MdFile = { name: string; file: File };
@@ -140,7 +139,26 @@ export default function Home() {
 
   useEffect(() => () => { resetFavicon(); }, []);
 
-  function setTextSaved(v: string) { _text = v; setText(v); }
+  function setTextSaved(v: string) {
+    _text = v;
+    setText(v);
+    try { sessionStorage.setItem("qpilot:text", v); } catch {}
+  }
+
+  // the draft survives a reload; "Edit test case" on a run page hands its text over
+  useEffect(() => {
+    try {
+      const prefill = sessionStorage.getItem("qpilot:prefill");
+      if (prefill !== null) {
+        sessionStorage.removeItem("qpilot:prefill");
+        setTextSaved(prefill);
+        setSelectedFileSaved(null);
+      } else if (!_text) {
+        const draft = sessionStorage.getItem("qpilot:text");
+        if (draft) setTextSaved(draft);
+      }
+    } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function setMdFilesSaved(v: MdFile[]) { _mdFiles = v; setMdFiles(v); }
   function setSelectedFileSaved(v: string | null) { _selectedFile = v; setSelectedFile(v); }
   function setCheckedFilesSaved(v: Set<string>) { _checkedFiles = v; setCheckedFiles(v); }
@@ -351,7 +369,6 @@ export default function Home() {
   return (
     <main className="flex flex-col items-center min-h-screen px-6 pt-20 pb-24">
       <div className="absolute right-4 top-4 flex items-center gap-2 sm:right-6 sm:top-6">
-        <ThemeToggle labels={dict(lang).settings} />
         <Link href="/settings" title={t.settings}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors">
           <SettingsIcon className="size-3.5" />
@@ -362,7 +379,7 @@ export default function Home() {
         <Bot className="size-5 text-foreground/80" />
       </div>
 
-      <h1 className="text-3xl font-semibold tracking-tight mb-2">QA Agent</h1>
+      <h1 className="text-3xl font-semibold tracking-tight mb-2">qpilot</h1>
       <p className="text-sm text-muted-foreground mb-10">{t.tagline}</p>
 
       <div className={cn("w-full space-y-3", containerMaxW)}>
@@ -430,10 +447,10 @@ export default function Home() {
                         <ArrowRight className="size-3.5" />
                         {t.runN} {checkedCount}
                       </Button>
-                      <Button type="button" size="sm" variant="secondary"
+                      <Button type="button" size="sm" variant="outline"
                         className="h-7 gap-1.5 text-xs"
                         onClick={() => runBatch(false)}>
-                        <ArrowRight className="size-3.5" />
+                        <Eye className="size-3.5" />
                         {t.withPreview}
                       </Button>
                     </div>
@@ -562,9 +579,9 @@ export default function Home() {
               <Button type="submit" disabled={!text.trim() || busy} size="lg" className="gap-2 font-medium">
                 {busy ? t.running : <><ArrowRight className="size-4" />{t.run}</>}
               </Button>
-              <Button type="button" disabled={!text.trim() || busy} size="lg" variant="secondary"
+              <Button type="button" disabled={!text.trim() || busy} size="lg" variant="outline"
                 onClick={() => startRun(false)} className="gap-2">
-                {busy ? t.running : <><ArrowRight className="size-4" />{t.runPreview}</>}
+                {busy ? t.running : <><Eye className="size-4" />{t.runPreview}</>}
               </Button>
               <Button type="button" variant="ghost" size="lg"
                 onClick={() => setTextSaved(EXAMPLE)}

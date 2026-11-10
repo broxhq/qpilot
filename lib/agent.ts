@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { spawn } from "node:child_process";
-import { chromium, type Browser, type Locator, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { cleanupUploads, type StoredFile } from "./attachments";
 import {
   askQuestion,
@@ -11,8 +11,9 @@ import {
   saveScreenshot,
   setPlan,
 } from "./store";
+import { NetworkMonitor } from "./network";
 import { TOOLS, findAnchor, snapshot } from "./tools";
-import type { PlanGroup } from "./types";
+import type { PlanGroup, RunEvent } from "./types";
 import {
   callOpenAICompatible,
   parseRetryAfter,
@@ -41,7 +42,7 @@ Order:
 1. set_plan — first call. groups=[{title?,steps}], one group per TC. steps without leading numbers.
 2. navigate to the URL from the test case. Browser starts at about:blank — no page until you navigate.
 3. Preconditions (login, opening a section) — execute after navigate, do not include in plan, do not call report_step. If precondition fails — step 1 = fail, then finish immediately.
-4. Each step: act → read the snapshot returned BY that action → report_step(num=sequential).
+4. Each step: act → read the snapshot returned BY that action → report_step(num=sequential, expected=the step's expected result copied from the test case, evidence=what you actually observed).
 5. Each step exactly once. finish — after the last step.
 
 EFFICIENCY — you have a limited number of steps, do not waste them:
@@ -82,6 +83,18 @@ You CANNOT see what is inside an attached file — you only hand it to the page.
 - Describe the step by what you actually did: "uploaded <name>".
 - For the result, quote what the PAGE reports after the upload (e.g. "Загружено 1 из 1", a file chip, an error). If the page reports nothing, say that — do not infer success from the file's content.
 
+Tabs: when an action opens a new browser tab you are switched to it automatically and told so; results list the open tabs while there is more than one. Use switch_tab(index) to go back.
+Dialogs: native alert/confirm/prompt dialogs are accepted (OK) automatically and their text is reported at the top of the action result — quote it as evidence when the step is about it. To press Cancel, or to type into a prompt, call handle_dialog BEFORE the action that opens the dialog.
+
+Network tools — use them ONLY when the test case asks to mock, intercept, break, slow down or inspect requests:
+- mock_request BEFORE the action that sends the request.
+- Response body: never guess field names when you can look them up. The test case gives the body → use it as is. Otherwise take the shape from the REAL response: if that request has not happened yet in this run, let it happen once without a mock, read it with get_requests, then mock with the same field names and your own values. To change a few fields of a real response prefer patch — it needs no shape at all. Invent a body from scratch only when the real request cannot be made.
+- Read what mock_request returns: it compares your body with the real response and names missing or wrong fields — fix the body before going on.
+- Mocks persist. Call clear_mocks once the test case no longer needs them (always before moving on to the next test case).
+- set_offline(true/false) for no-connection checks; turn the network back on afterwards.
+- get_requests is the Network tab: use it when the expected result is about a request (it was sent, its body, its status). Quote method, URL and status as evidence. If a mock matched 0 requests, the URL pattern is wrong — fix it instead of reporting pass.
+- get_console lists JS errors; use it when the test case asks about console errors.
+
 ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
 
 TOOL CALLS ONLY. Do not write text.`;
@@ -92,9 +105,20 @@ const MAX_EMPTY_TURNS = 3;
 
 interface ToolContext {
   runId: string;
+  /** The active tab. Replaced when an action opens a new tab or switch_tab is called. */
   page: Page;
+  context: BrowserContext;
+  net: NetworkMonitor;
   step: { current: number };
   files: StoredFile[];
+  /** A tab opened by the page that the agent hasn't been moved to yet. */
+  incoming: Page | null;
+  /** One-shot answer for the next native dialog, set by handle_dialog. */
+  dialogPolicy: { action: "accept" | "dismiss"; text?: string } | null;
+  /** Things that happened on their own (dialog, new tab) — prepended to the next tool result. */
+  notices: string[];
+  /** Values typed into password fields or given as secret answers — masked in everything the UI shows. */
+  secrets: Set<string>;
 }
 
 interface ToolResult {
@@ -122,7 +146,118 @@ async function locate(
   return loc;
 }
 
-const stripRefs = (t: string): string => t.replace(/\s*\[ref=(?:f\d+)?e\d+\]/g, "");
+// Models copy refs out of the snapshot in both forms: [ref=e12] and bare [e12].
+const stripRefs = (t: string): string => t.replace(/\s*\[(?:ref=)?(?:f\d+)?e\d+\]/g, "");
+
+const SECRET_MASK = "••••••";
+
+/** Mask known secrets in text that goes to events / the UI (never in what the model receives). */
+function redact(ctx: ToolContext, text: string): string {
+  let out = text;
+  for (const secret of ctx.secrets) {
+    if (secret.length >= 3) out = out.split(secret).join(SECRET_MASK);
+  }
+  return out;
+}
+
+function redactDeep(ctx: ToolContext, v: unknown): unknown {
+  if (ctx.secrets.size === 0) return v;
+  if (typeof v === "string") return redact(ctx, v);
+  if (Array.isArray(v)) return v.map((x) => redactDeep(ctx, x));
+  if (v && typeof v === "object") {
+    return Object.fromEntries(
+      Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, redactDeep(ctx, x)]),
+    );
+  }
+  return v;
+}
+
+/** Is `fill` about to type into a password / one-time-code field? */
+async function isSecretField(page: Page, input: Record<string, unknown>): Promise<boolean> {
+  const ref = typeof input.ref === "string" ? input.ref.trim() : "";
+  if (!REF_RE.test(ref)) return false;
+  return page
+    .locator(`aria-ref=${ref}`)
+    .evaluate(
+      (el) =>
+        el instanceof HTMLInputElement &&
+        (el.type === "password" ||
+          /one-time-code|current-password|new-password|cc-csc/.test(el.autocomplete)),
+      undefined,
+      { timeout: 1000 },
+    )
+    .catch(() => false);
+}
+
+/** Events that aren't tied to a tool call (a dialog, a new tab) — visible in the step log. */
+function note(ctx: ToolContext, text: string, info: NonNullable<RunEvent["info"]>): void {
+  ctx.notices.push(text);
+  pushEvent(ctx.runId, { ts: Date.now(), kind: "info", text, info, stepNum: ctx.step.current });
+}
+
+function tabsLine(ctx: ToolContext): string {
+  const pages = ctx.context.pages();
+  if (pages.length < 2) return "";
+  return (
+    "Tabs: " +
+    pages
+      .map((p, i) => `${i + 1}) ${p.url() || "about:blank"}${p === ctx.page ? " [active]" : ""}`)
+      .join("  ") +
+    " — switch_tab(index) to change"
+  );
+}
+
+/** Move the agent to a tab the page has just opened (target=_blank, window.open). */
+async function adoptNewTab(ctx: ToolContext): Promise<void> {
+  const fresh = ctx.incoming;
+  if (!fresh) return;
+  ctx.incoming = null;
+  if (fresh.isClosed()) return;
+  await fresh.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  ctx.page = fresh;
+  note(ctx, `A new browser tab opened (${fresh.url()}) — it is now the active tab.`, {
+    type: "newTab",
+    url: fresh.url(),
+  });
+}
+
+/** Dialogs, console errors and "tab closed" are per page: call for every tab of the run. */
+function wirePage(ctx: ToolContext, page: Page): void {
+  ctx.net.wirePage(page);
+
+  // Without a handler Playwright dismisses every dialog, so "Delete? → OK"
+  // would silently cancel. Accept by default, like a tester moving on.
+  page.on("dialog", async (dialog) => {
+    const policy = dialog.type() === "beforeunload" ? null : ctx.dialogPolicy;
+    if (dialog.type() !== "beforeunload") ctx.dialogPolicy = null;
+    const action = policy?.action ?? "accept";
+    try {
+      if (action === "dismiss") await dialog.dismiss();
+      else await dialog.accept(dialog.type() === "prompt" ? policy?.text : undefined);
+    } catch {
+      return; // page went away with the dialog open
+    }
+    if (dialog.type() === "beforeunload") return;
+    const typed = dialog.type() === "prompt" && action === "accept" && policy?.text ? ` with "${policy.text}"` : "";
+    note(
+      ctx,
+      `Browser ${dialog.type()} dialog: "${dialog.message()}" — ${action === "accept" ? `accepted (OK)${typed}` : "dismissed (Cancel)"}.`,
+      { type: "dialog", dialog: dialog.type(), message: dialog.message(), accepted: action === "accept" },
+    );
+  });
+
+  page.on("close", () => {
+    if (ctx.page !== page) return;
+    const rest = ctx.context.pages().filter((p) => p !== page && !p.isClosed());
+    const next = rest[rest.length - 1];
+    if (!next) return;
+    ctx.page = next;
+    note(ctx, `The active tab was closed — switched back to ${next.url()}.`, {
+      type: "tabClosed",
+      url: next.url(),
+    });
+  });
+}
 
 // Wraps click/fill: when an overlay intercepts the click ("intercepts pointer
 // events"), return a short directive instead of Playwright's wall of log text —
@@ -130,9 +265,12 @@ const stripRefs = (t: string): string => t.replace(/\s*\[ref=(?:f\d+)?e\d+\]/g, 
 // Return a fresh snapshot in the SAME result as the action — this removes the
 // separate snapshot call after every action and roughly halves iterations per
 // step. Only the short observation goes to events/SSE; the tree goes to the model.
-async function actionResult(page: Page, msg: string): Promise<ToolResult> {
-  const tree = await snapshot(page).catch(() => "");
-  return { content: tree ? `${msg}\n\n${tree}` : msg, observation: msg };
+async function actionResult(ctx: ToolContext, msg: string): Promise<ToolResult> {
+  await adoptNewTab(ctx);
+  const tree = await snapshot(ctx.page).catch(() => "");
+  const tabs = tabsLine(ctx);
+  const body = [msg, tabs, tree].filter(Boolean).join("\n\n");
+  return { content: body, observation: msg };
 }
 
 // Signature of a tool call for loop detection: tool + its semantic target +
@@ -334,7 +472,7 @@ async function executeTool(
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
-      return actionResult(page, `OK: navigated to ${input.url}`);
+      return actionResult(ctx, `OK: navigated to ${input.url}`);
 
     case "snapshot": {
       const tree = await snapshot(
@@ -348,13 +486,15 @@ async function executeTool(
     case "click": {
       const loc = await locate(page, input);
       await clickWithHint(() => loc.click({ timeout: 5000 }));
-      return actionResult(page, `OK: clicked ${input.name ?? input.ref}`);
+      // a click that opens a new tab resolves before the tab is announced
+      await page.waitForTimeout(150).catch(() => {});
+      return actionResult(ctx, `OK: clicked ${input.name ?? input.ref}`);
     }
 
     case "fill": {
       const loc = await locate(page, input);
       await clickWithHint(() => loc.fill(String(input.value), { timeout: 5000 }));
-      return actionResult(page, `OK: filled "${input.value}" into ${input.name ?? input.ref}`);
+      return actionResult(ctx, `OK: filled "${input.value}" into ${input.name ?? input.ref}`);
     }
 
     case "select": {
@@ -366,13 +506,13 @@ async function executeTool(
       } catch {
         await loc.selectOption({ label: val }, { timeout: 5000 });
       }
-      return actionResult(page, `OK: selected "${val}" in ${input.name ?? input.ref}`);
+      return actionResult(ctx, `OK: selected "${val}" in ${input.name ?? input.ref}`);
     }
 
     case "hover": {
       const loc = await locate(page, input);
       await loc.hover({ timeout: 5000 });
-      return actionResult(page, `OK: hovered ${input.name ?? input.ref}`);
+      return actionResult(ctx, `OK: hovered ${input.name ?? input.ref}`);
     }
 
     case "scroll_to": {
@@ -399,7 +539,7 @@ async function executeTool(
       // scrollIntoViewIfNeeded walks up and scrolls every scrollable ancestor
       // (page, inner divs, horizontal) as needed to reveal the element.
       await loc.scrollIntoViewIfNeeded({ timeout: 5000 });
-      return actionResult(page, `OK: scrolled to ${label}`);
+      return actionResult(ctx, `OK: scrolled to ${label}`);
     }
 
     case "scroll": {
@@ -418,23 +558,24 @@ async function executeTool(
       } else {
         res = await page.evaluate(scrollNearest, { x, y });
       }
-      return actionResult(page, describeScroll(res, x, y));
+      return actionResult(ctx, describeScroll(res, x, y));
     }
 
     case "press":
       await page.keyboard.press(String(input.key));
-      return actionResult(page, `OK: pressed ${input.key}`);
+      await page.waitForTimeout(150).catch(() => {});
+      return actionResult(ctx, `OK: pressed ${input.key}`);
 
     case "dismiss":
       // click an empty viewport corner = click-outside: closes dropdowns/popovers
       await page.mouse.click(5, 5);
       await page.waitForTimeout(150);
-      return actionResult(page, "OK: clicked empty area to close any open overlay");
+      return actionResult(ctx, "OK: clicked empty area to close any open overlay");
 
     case "wait": {
       const ms = Math.min(Number(input.ms) || 0, 5000);
       await page.waitForTimeout(ms);
-      return actionResult(page, `OK: waited ${ms}ms`);
+      return actionResult(ctx, `OK: waited ${ms}ms`);
     }
 
     case "upload_file": {
@@ -503,15 +644,103 @@ async function executeTool(
       }
 
       return actionResult(
-        page,
+        ctx,
         `OK: attached ${file.name} to ${input.name ?? (ref || "the upload field")}`,
       );
+    }
+
+    case "switch_tab": {
+      const pages = ctx.context.pages();
+      const target = pages[Number(input.index) - 1];
+      if (!target) {
+        return { content: `No tab ${input.index}. ${tabsLine(ctx) || "Only one tab is open."}` };
+      }
+      ctx.page = target;
+      await target.bringToFront().catch(() => {});
+      return actionResult(ctx, `OK: switched to tab ${input.index} (${target.url()})`);
+    }
+
+    case "handle_dialog": {
+      const action = input.action === "dismiss" ? "dismiss" : "accept";
+      const text = typeof input.text === "string" ? input.text : undefined;
+      ctx.dialogPolicy = { action, text };
+      return {
+        content: `OK: the next dialog will be ${action === "dismiss" ? "dismissed (Cancel)" : `accepted (OK)${text ? ` with "${text}"` : ""}`}. Now do the action that opens it.`,
+      };
+    }
+
+    case "mock_request": {
+      const url = String(input.url ?? "").trim();
+      if (!url) return { content: "Error: url is required — part of the request URL to intercept." };
+      // models pass JSON either as a string or as an object — accept both
+      const body =
+        input.body === undefined || input.body === null
+          ? undefined
+          : typeof input.body === "string"
+            ? input.body
+            : JSON.stringify(input.body);
+      let patch: unknown = input.patch;
+      if (typeof patch === "string") {
+        try {
+          patch = JSON.parse(patch);
+        } catch {
+          return { content: "Error: patch must be JSON (an object or a list)." };
+        }
+      }
+      const summary = await ctx.net.addMock({
+        url,
+        method: typeof input.method === "string" ? input.method : undefined,
+        status: Number.isFinite(Number(input.status)) && input.status !== undefined ? Number(input.status) : undefined,
+        body,
+        contentType: typeof input.content_type === "string" ? input.content_type : undefined,
+        patch: patch ?? undefined,
+        abort: input.abort === true,
+        delayMs: Number(input.delay_ms) || undefined,
+      });
+      return { content: `OK: ${summary}`, observation: `OK: ${summary.split("\n")[0]}` };
+    }
+
+    case "clear_mocks": {
+      const report = ctx.net.describeMocks();
+      const n = await ctx.net.clearMocks();
+      return { content: `OK: removed ${n} mock(s).\n${report}`, observation: `Removed ${n} mock(s)` };
+    }
+
+    case "set_offline": {
+      const offline = input.offline !== false;
+      await ctx.context.setOffline(offline);
+      return { content: `OK: the browser is now ${offline ? "OFFLINE — requests will fail" : "online"}.` };
+    }
+
+    case "get_requests": {
+      const list = ctx.net.requests({
+        url: typeof input.url === "string" && input.url.trim() ? input.url.trim() : undefined,
+        method: typeof input.method === "string" ? input.method : undefined,
+        failedOnly: input.failed_only === true,
+        limit: Number(input.limit) || undefined,
+      });
+      const mocks = ctx.net.describeMocks();
+      return {
+        content: mocks === "No active mocks." ? list : `${list}\n\nActive mocks:\n${mocks}`,
+        observation: list.split("\n")[0],
+      };
+    }
+
+    case "get_console": {
+      const errors = ctx.net.allConsoleErrors();
+      return {
+        content: errors.length
+          ? `${errors.length} console error(s):\n${errors.map((e) => `- ${e}`).join("\n")}`
+          : "No console errors so far.",
+        observation: `${errors.length} console error(s)`,
+      };
     }
 
     case "ask_user": {
       const prompt = String(input.prompt ?? "");
       const secret = Boolean(input.secret);
       const answer = await askQuestion(runId, prompt, secret);
+      if (secret && answer) ctx.secrets.add(answer);
       return {
         content: answer,
         observation: secret ? "User entered a secret value" : `User replied: ${answer}`,
@@ -530,12 +759,21 @@ async function executeTool(
           screenshot = `/api/run/${runId}/shot/${num}`;
         }
       }
+      const clean = (v: unknown) => redact(ctx, stripRefs(String(v))).trim();
+      // console errors since the previous step: a note for the reader, not a verdict —
+      // third-party scripts make most consoles noisy, so they never change the status
+      const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
       const step = {
         num,
-        description: stripRefs(String(input.description)).replace(/^\s*\d+[.)]\s*/, ""),
+        description: clean(input.description).replace(/^\s*\d+[.)]\s*/, ""),
         status,
-        evidence: input.evidence ? stripRefs(String(input.evidence)) : undefined,
+        expected: input.expected ? clean(input.expected) : undefined,
+        evidence: input.evidence ? clean(input.evidence) : undefined,
         screenshot,
+        consoleErrors: consoleErrors.length ? consoleErrors : undefined,
+        // a made-up response body whose shape was never compared to a real one
+        // answered a request on this step — the reader should know before trusting a fail
+        mockUnverified: ctx.net.takeUnverifiedMockHits() > 0 || undefined,
       };
       pushEvent(runId, { ts: Date.now(), kind: "step", step, stepNum: num });
       ctx.step.current = num + 1;
@@ -548,7 +786,7 @@ async function executeTool(
         ts: Date.now(),
         kind: "done",
         status,
-        summary: stripRefs(String(input.summary ?? "")),
+        summary: redact(ctx, stripRefs(String(input.summary ?? ""))),
       });
       return { content: "OK: run finished", finished: true };
     }
@@ -587,7 +825,7 @@ function compactHistory(
     const content = (m.content as Anthropic.ToolResultBlockParam[]).map((b, bi) => {
       if (!truncate.has(`${mi}-${bi}`) || b?.type !== "tool_result") return b;
       const c = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
-      return c.length < 400 ? b : { ...b, content: `[…old page snapshot, ${c.length} chars omitted]` };
+      return c.length < 400 ? b : { ...b, content: `[…old tool output (page snapshot or request list), ${c.length} chars omitted]` };
     });
     return { ...m, content };
   });
@@ -640,6 +878,13 @@ async function callModel(
   throw lastErr;
 }
 
+/** Put what happened on its own (dialog, new tab) in front of the tool result, where the model reads first. */
+function withNotices(ctx: ToolContext, content: string): string {
+  if (ctx.notices.length === 0) return content;
+  const notes = ctx.notices.splice(0).map((n) => `NOTE: ${n}`).join("\n");
+  return `${notes}\n\n${content}`;
+}
+
 export async function runAgent(
   runId: string,
   testCase: string,
@@ -669,7 +914,32 @@ export async function runAgent(
     const page = await context.newPage();
 
     const files = getFiles(runId);
-    const ctx: ToolContext = { runId, page, step: { current: 1 }, files };
+    const ctx: ToolContext = {
+      runId,
+      page,
+      context,
+      net: new NetworkMonitor(context),
+      step: { current: 1 },
+      files,
+      incoming: null,
+      dialogPolicy: null,
+      notices: [],
+      secrets: new Set(),
+    };
+    wirePage(ctx, page);
+    // tabs the page opens itself (target=_blank, window.open): the agent is moved
+    // to the newest one when the action that opened it returns — see adoptNewTab
+    context.on("page", (opened) => {
+      wirePage(ctx, opened);
+      ctx.incoming = opened;
+    });
+
+    // the model is told the language outright: a rule in the system prompt alone
+    // is not enough for some models, which drift to their default language
+    const languageNote =
+      getRun(runId)?.language === "ru"
+        ? "The test case is written in Russian — write every step description, expected, evidence and the summary in Russian."
+        : "Write every step description, expected, evidence and the summary in the language the test case above is written in — do not translate them into another language.";
 
     const attachmentNote = files.length
       ? "\n\nFiles attached to this run — you can ONLY upload them (upload_file, exact name); their contents are not available to you:\n" +
@@ -684,7 +954,8 @@ export async function runAgent(
           testCase +
           "\n```" +
           attachmentNote +
-          "\n\nFirst call set_plan — break into groups by test case (groups=[{title, steps}]) to show the plan. Then open the starting URL via navigate (browser starts at about:blank), handle login if needed, and execute steps in order, calling report_step with the sequential num for each. If an OTP is needed — ask_user. Finish with finish.",
+          "\n\nFirst call set_plan — break into groups by test case (groups=[{title, steps}]) to show the plan. Then open the starting URL via navigate (browser starts at about:blank), handle login if needed, and execute steps in order, calling report_step with the sequential num for each. If an OTP is needed — ask_user. Finish with finish.\n\n" +
+          languageNote,
       },
     ];
 
@@ -712,7 +983,7 @@ export async function runAgent(
         pushEvent(runId, {
           ts: Date.now(),
           kind: "thought",
-          text: stripRefs(textContent),
+          text: redact(ctx, stripRefs(textContent)),
           stepNum: ctx.step.current,
         });
       }
@@ -761,13 +1032,18 @@ export async function runAgent(
 
         sigsSinceProgress.push(actionSig(name, input));
 
+        // a value typed into a password field must not show up in the log
+        if (name === "fill" && typeof input.value === "string" && input.value) {
+          if (await isSecretField(ctx.page, input)) ctx.secrets.add(input.value);
+        }
+
         // set_plan is a run-level event, not tied to any specific step
         const stepNum = name === "set_plan" ? undefined : ctx.step.current;
         pushEvent(runId, {
           ts: Date.now(),
           kind: "action",
           toolName: name,
-          toolInput: input,
+          toolInput: redactDeep(ctx, input),
           stepNum,
         });
 
@@ -776,12 +1052,12 @@ export async function runAgent(
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
-            content: ret.content,
+            content: withNotices(ctx, ret.content),
           });
           pushEvent(runId, {
             ts: Date.now(),
             kind: "observation",
-            text: ret.observation ?? ret.content,
+            text: redact(ctx, ret.observation ?? ret.content),
             stepNum,
           });
           if (ret.finished) finished = true;
@@ -791,13 +1067,13 @@ export async function runAgent(
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
-            content: `Error: ${message}`,
+            content: withNotices(ctx, `Error: ${message}`),
             is_error: true,
           });
           pushEvent(runId, {
             ts: Date.now(),
             kind: "observation",
-            text: `Error: ${message}`,
+            text: redact(ctx, `Error: ${message}`),
             stepNum,
           });
         }

@@ -8,7 +8,7 @@ const sans = Geist({ subsets: ["latin"], variable: "--font-sans" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
-  title: "QA Agent",
+  title: "qpilot",
   description: "Run manual test cases with an AI agent in a real browser",
 };
 

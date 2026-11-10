@@ -28,6 +28,7 @@ export function createRun(
   title: string,
   testCase = "",
   files: StoredFile[] = [],
+  headless = true,
 ): Run {
   // keep at most MAX_HISTORY finished runs
   const finished = [...entries.entries()].filter(([, e]) => !ACTIVE.has(e.run.status));
@@ -42,6 +43,7 @@ export function createRun(
     title,
     testCase,
     language: detectLanguage(testCase),
+    headless,
     events: [],
     steps: [],
     attachments: files.map(({ name, size }) => ({ name, size })),

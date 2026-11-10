@@ -36,6 +36,26 @@ export interface Dict {
   endedBeforePlan: string;
   seeReason: string;
   summary: string;
+  expected: string;
+  actual: string;
+  consoleErrors: string;
+  mockUnverified: string;
+  infoNewTab: string;
+  infoTabClosed: string;
+  infoDialog: string;
+  infoAccepted: string;
+  infoDismissed: string;
+  showReasoning: string;
+  hideReasoning: string;
+  copyReport: string;
+  copied: string;
+  downloadReport: string;
+  runAgain: string;
+  editAndRun: string;
+  reportTitle: string;
+  reportResult: string;
+  reportDuration: string;
+  reportScreenshot: string;
   testCase: string;
   attached: string;
   noEvents: string;
@@ -138,6 +158,19 @@ export interface Dict {
     up: string;
     right: string;
     left: string;
+    switchingTab: string;
+    nextDialog: string;
+    dialogAccept: string;
+    dialogDismiss: string;
+    mocking: string;
+    mockAbort: string;
+    mockPatch: string;
+    mockDelay: string;
+    clearingMocks: string;
+    goingOffline: string;
+    goingOnline: string;
+    readingRequests: string;
+    readingConsole: string;
   };
 }
 
@@ -157,6 +190,26 @@ const en: Dict = {
   endedBeforePlan: "The run ended before the agent produced a plan.",
   seeReason: "See the reason below.",
   summary: "Summary",
+  expected: "Expected",
+  actual: "Actual",
+  consoleErrors: "Console errors during this step",
+  mockUnverified: "The mocked response was made up without a real one to compare with — its structure may not match what the page expects.",
+  infoNewTab: "A new tab opened",
+  infoTabClosed: "The tab was closed, back to",
+  infoDialog: "Browser dialog",
+  infoAccepted: "OK pressed",
+  infoDismissed: "Cancel pressed",
+  showReasoning: "Show agent reasoning",
+  hideReasoning: "Hide agent reasoning",
+  copyReport: "Copy report",
+  copied: "Copied",
+  downloadReport: "Download report",
+  runAgain: "Run again",
+  editAndRun: "Edit test case",
+  reportTitle: "Test run report",
+  reportResult: "Result",
+  reportDuration: "Duration",
+  reportScreenshot: "Screenshot",
   testCase: "Test case",
   attached: "Attached",
   noEvents: "no events for this step",
@@ -273,6 +326,19 @@ const en: Dict = {
     up: "up",
     right: "right",
     left: "left",
+    switchingTab: "Switching to tab",
+    nextDialog: "Next dialog:",
+    dialogAccept: "OK",
+    dialogDismiss: "Cancel",
+    mocking: "Mocking",
+    mockAbort: "network error",
+    mockPatch: "patch the real response",
+    mockDelay: "delay",
+    clearingMocks: "Removing mocks",
+    goingOffline: "Turning the network off",
+    goingOnline: "Turning the network on",
+    readingRequests: "Reading network requests",
+    readingConsole: "Reading console errors",
   },
 };
 
@@ -292,6 +358,26 @@ const ru: Dict = {
   endedBeforePlan: "Прогон завершился до того, как агент составил план.",
   seeReason: "Причина — ниже.",
   summary: "Итог",
+  expected: "Ожидалось",
+  actual: "Фактически",
+  consoleErrors: "Ошибки в консоли на этом шаге",
+  mockUnverified: "Подменённый ответ придуман без сверки с настоящим — его структура может не совпадать с тем, что ждёт страница.",
+  infoNewTab: "Открылась новая вкладка",
+  infoTabClosed: "Вкладка закрыта, возврат на",
+  infoDialog: "Диалог браузера",
+  infoAccepted: "нажато OK",
+  infoDismissed: "нажата «Отмена»",
+  showReasoning: "Показать рассуждения агента",
+  hideReasoning: "Скрыть рассуждения агента",
+  copyReport: "Скопировать отчёт",
+  copied: "Скопировано",
+  downloadReport: "Скачать отчёт",
+  runAgain: "Запустить снова",
+  editAndRun: "Изменить кейс",
+  reportTitle: "Отчёт о прогоне",
+  reportResult: "Результат",
+  reportDuration: "Длительность",
+  reportScreenshot: "Скриншот",
   testCase: "Тест-кейс",
   attached: "Вложения",
   noEvents: "событий по этому шагу нет",
@@ -408,6 +494,19 @@ const ru: Dict = {
     up: "вверх",
     right: "вправо",
     left: "влево",
+    switchingTab: "Переключение на вкладку",
+    nextDialog: "Следующий диалог:",
+    dialogAccept: "OK",
+    dialogDismiss: "Отмена",
+    mocking: "Подмена запроса",
+    mockAbort: "сетевая ошибка",
+    mockPatch: "правка настоящего ответа",
+    mockDelay: "задержка",
+    clearingMocks: "Снятие подмен",
+    goingOffline: "Отключение сети",
+    goingOnline: "Включение сети",
+    readingRequests: "Чтение сетевых запросов",
+    readingConsole: "Чтение ошибок консоли",
   },
 };
 

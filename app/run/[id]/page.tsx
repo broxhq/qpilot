@@ -2,6 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Check,
@@ -9,10 +10,14 @@ import {
   ChevronRight,
   CircleAlert,
   Clock,
+  Copy,
+  Download,
   Loader2,
   Paperclip,
   Pause,
+  Pencil,
   Play,
+  RotateCw,
   Star,
   X,
 } from "lucide-react";
@@ -39,6 +44,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn, formatDuration } from "@/lib/utils";
+import { reportHtml, reportMarkdown } from "@/lib/report";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -46,12 +52,16 @@ interface PageProps {
 
 export default function RunPage({ params }: PageProps) {
   const { id } = use(params);
+  const router = useRouter();
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [finishedAt, setFinishedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [pauseBusy, setPauseBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [rerunBusy, setRerunBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const gotSnapshot = useRef(false);
 
   useEffect(() => {
@@ -102,6 +112,74 @@ export default function RunPage({ params }: PageProps) {
       body: JSON.stringify({ action: status === "paused" ? "resume" : "pause" }),
     }).catch(() => {});
     setPauseBusy(false);
+  }
+
+  async function copyReport() {
+    if (!run) return;
+    try {
+      await navigator.clipboard.writeText(reportMarkdown(run, elapsed, t));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // a self-contained HTML file: screenshots are inlined, so it can be attached to a ticket
+  async function downloadReport() {
+    if (!run) return;
+    const shots: Record<number, string> = {};
+    await Promise.all(
+      run.steps.filter((s) => s.screenshot).map(async (s) => {
+        try {
+          const blob = await (await fetch(s.screenshot!)).blob();
+          shots[s.num] = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+        } catch {
+          // screenshot is gone (server restarted) — the report still has the text
+        }
+      }),
+    );
+    const html = reportHtml(run, elapsed, t, shots);
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `qpilot-${run.id}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function runAgain() {
+    if (!run) return;
+    setRerunBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testCase: run.testCase, headless: run.headless }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      router.push(`/run/${json.id}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+      setRerunBusy(false);
+    }
+  }
+
+  // hand the test case back to the home page editor (it also holds the file picker,
+  // so a run that had attachments is repeated from there)
+  function editTestCase() {
+    if (!run) return;
+    try {
+      sessionStorage.setItem("qpilot:prefill", run.testCase);
+    } catch {}
+    router.push("/");
   }
 
   const activeStepNum = isRunning
@@ -231,6 +309,35 @@ export default function RunPage({ params }: PageProps) {
             />
           </div>
         )}
+
+        {run && !isActive && (
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
+            {/* attachments are deleted when a run ends, so such a run is repeated via the editor */}
+            {run.attachments.length === 0 && (
+              <Button size="sm" onClick={runAgain} disabled={rerunBusy} className="gap-1.5">
+                <RotateCw className={cn("size-3.5", rerunBusy && "animate-spin")} />
+                {t.runAgain}
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={editTestCase} className="gap-1.5">
+              <Pencil className="size-3.5" />
+              {t.editAndRun}
+            </Button>
+            {steps.length > 0 && (
+              <>
+                <Button size="sm" variant="outline" onClick={copyReport} className="gap-1.5 sm:ml-auto">
+                  {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+                  {copied ? t.copied : t.copyReport}
+                </Button>
+                <Button size="sm" variant="outline" onClick={downloadReport} className="gap-1.5">
+                  <Download className="size-3.5" />
+                  {t.downloadReport}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+        {actionError && <p className="mt-2 text-xs text-destructive">{actionError}</p>}
       </section>
 
       {/* steps */}
@@ -491,7 +598,12 @@ function StepCard({
 }) {
   const base = STEP_ACCENT[step.status] ?? STEP_ACCENT.queued;
   const a = active ? { ...base, ...ACTIVE_ACCENT } : base;
-  const logs = events.filter(isVisibleLog);
+  const visible = events.filter(isVisibleLog);
+  // the model's reasoning is noise for a tester reading the report — one click away
+  const thoughtN = visible.filter((e) => e.kind === "thought").length;
+  const [showThoughts, setShowThoughts] = useState(false);
+  const logs = showThoughts ? visible : visible.filter((e) => e.kind !== "thought");
+  const verdictFailed = step.status === "fail" || step.status === "warn";
 
   const autoOpen = active || step.status === "fail";
   const [open, setOpen] = useState(autoOpen);
@@ -532,10 +644,42 @@ function StepCard({
           <ChevronDown className="size-3.5 text-faint shrink-0 hidden group-data-open:inline" />
         </CollapsibleTrigger>
 
-        {step.evidence && (
-          <div className="px-4 pb-3 -mt-0.5 text-[11.5px] text-muted-foreground leading-relaxed font-mono">
-            {step.evidence}
-          </div>
+        {verdictFailed && step.expected ? (
+          <dl className="px-4 pb-3 -mt-0.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11.5px] leading-relaxed">
+            <dt className="text-subtle">{t.expected}</dt>
+            <dd className="font-mono text-foreground/80">{step.expected}</dd>
+            {step.evidence && (
+              <>
+                <dt className="text-subtle">{t.actual}</dt>
+                <dd className={cn("font-mono", step.status === "fail" ? "text-destructive" : "text-warning")}>
+                  {step.evidence}
+                </dd>
+              </>
+            )}
+          </dl>
+        ) : (
+          step.evidence && (
+            <div className="px-4 pb-3 -mt-0.5 text-[11.5px] text-muted-foreground leading-relaxed font-mono">
+              {step.evidence}
+            </div>
+          )
+        )}
+
+        {step.mockUnverified && (
+          <p className="px-4 pb-3 -mt-1 text-[11px] leading-relaxed text-warning/90">⚠ {t.mockUnverified}</p>
+        )}
+
+        {step.consoleErrors && step.consoleErrors.length > 0 && (
+          <details className="px-4 pb-3 -mt-1 text-[11px] text-warning/90">
+            <summary className="cursor-pointer select-none">
+              {t.consoleErrors}: {step.consoleErrors.length}
+            </summary>
+            <ul className="mt-1.5 space-y-1 font-mono text-muted-foreground">
+              {step.consoleErrors.map((e, i) => (
+                <li key={i} className="break-words">{e}</li>
+              ))}
+            </ul>
+          </details>
         )}
 
         <CollapsibleContent>
@@ -562,9 +706,20 @@ function StepCard({
                 ))}
               </div>
             ) : (
-              <div className="text-[11px] text-faint">
-                {t.noEvents}
-              </div>
+              thoughtN === 0 && (
+                <div className="text-[11px] text-faint">
+                  {t.noEvents}
+                </div>
+              )
+            )}
+            {thoughtN > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowThoughts((v) => !v)}
+                className="text-[11px] text-subtle hover:text-foreground transition-colors"
+              >
+                {showThoughts ? t.hideReasoning : `${t.showReasoning} (${thoughtN})`}
+              </button>
             )}
           </div>
         </CollapsibleContent>
@@ -597,6 +752,24 @@ function describeAction(name?: string, input?: unknown, t: Dict = dict("en")): s
     case "dismiss":  return a.closingOverlay;
     case "wait":     return `${a.waiting} ${p.ms ?? ""} ms`;
     case "ask_user": return a.askingUser;
+    case "switch_tab": return `${a.switchingTab} ${p.index ?? ""}`;
+    case "handle_dialog": return `${a.nextDialog} ${p.action === "dismiss" ? a.dialogDismiss : a.dialogAccept}`;
+    case "mock_request": {
+      const how = p.abort
+        ? a.mockAbort
+        : p.patch !== undefined
+          ? a.mockPatch
+          : p.status !== undefined || p.body !== undefined
+            ? String(p.status ?? 200)
+            : "";
+      const delay = p.delay_ms ? `${a.mockDelay} ${p.delay_ms} ms` : "";
+      const target = `${p.method ? `${p.method} ` : ""}${p.url ?? ""}`;
+      return `${a.mocking} ${target} → ${[how, delay].filter(Boolean).join(", ")}`;
+    }
+    case "clear_mocks": return a.clearingMocks;
+    case "set_offline": return p.offline === false ? a.goingOnline : a.goingOffline;
+    case "get_requests": return p.url ? `${a.readingRequests} "${p.url}"` : a.readingRequests;
+    case "get_console": return a.readingConsole;
     default:         return name ?? "action";
   }
 }
@@ -615,6 +788,15 @@ function renderLog(e: RunEvent, t: Dict): { icon: string; text: string; cls: str
       const t = e.text ?? "";
       if (t.startsWith("Error:")) return { icon: "✗", text: t, cls: "text-destructive" };
       return { icon: "·", text: t, cls: "text-subtle" };
+    }
+    case "info": {
+      const i = e.info;
+      const text = !i
+        ? (e.text ?? "")
+        : i.type === "dialog"
+          ? `${t.infoDialog} (${i.dialog}): «${i.message}» — ${i.accepted ? t.infoAccepted : t.infoDismissed}`
+          : `${i.type === "newTab" ? t.infoNewTab : t.infoTabClosed}: ${i.url}`;
+      return { icon: "•", text, cls: "text-warning/90" };
     }
     case "question":
       return { icon: "?", text: `${t.asking}: ${e.question?.prompt ?? ""}`, cls: "text-warning" };
