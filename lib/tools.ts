@@ -115,8 +115,22 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "wait_for",
+    description:
+      "Wait until a text appears on the page (or disappears, with gone=true), up to timeout_s seconds. Use it on slow pages: after logging in, submitting a form or opening a section, when the snapshot still shows the old page, a loader or a spinner. Pass a text the expected state must contain (a heading, a button label). Returns as soon as the text is there, with a fresh snapshot.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Visible text to wait for, e.g. a heading of the page that should open." },
+        gone: { type: "boolean", description: "true = wait until the text disappears (a loader, 'Loading…')." },
+        timeout_s: { type: "number", description: "How long to wait, in seconds. Default 30, max 90." },
+      },
+      required: ["text"],
+    },
+  },
+  {
     name: "wait",
-    description: "Wait N milliseconds (use sparingly, max 3000).",
+    description: "Wait N milliseconds (max 10000). Prefer wait_for when you know what should appear.",
     input_schema: {
       type: "object",
       properties: { ms: { type: "number" } },
@@ -138,7 +152,7 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "hover",
-    description: "Hover the mouse over an element (to reveal tooltips, dropdowns, etc). ref from snapshot is required.",
+    description: "Hover the mouse over an element. Use it for anything that opens on hover rather than on click: a notification bell, an avatar or header menu, a tooltip, a submenu. The result shows the page with the opened panel; then click inside it. ref from snapshot is required.",
     input_schema: {
       type: "object",
       properties: {

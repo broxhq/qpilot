@@ -752,6 +752,7 @@ function describeAction(name?: string, input?: unknown, t: Dict = dict("en")): s
     case "dismiss":  return a.closingOverlay;
     case "wait":     return `${a.waiting} ${p.ms ?? ""} ms`;
     case "ask_user": return a.askingUser;
+    case "wait_for": return `${p.gone ? a.waitingGone : a.waitingFor} "${p.text ?? ""}"`;
     case "switch_tab": return `${a.switchingTab} ${p.index ?? ""}`;
     case "handle_dialog": return `${a.nextDialog} ${p.action === "dismiss" ? a.dialogDismiss : a.dialogAccept}`;
     case "mock_request": {

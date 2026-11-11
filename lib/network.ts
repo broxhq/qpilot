@@ -12,6 +12,8 @@ const MAX_BODY_CHARS = 1200;
 const MAX_CAPTURE_BYTES = 200_000;
 const MAX_DELAY_MS = 30_000;
 const MAX_CONSOLE = 100;
+// A request open for this long is long polling, not a page that is still loading.
+const LONG_POLL_MS = 8000;
 
 const SENSITIVE_KEY =
   /pass(word|wd)?|token|secret|authorization|cookie|session|otp|cvv|cvc|api[-_]?key|signature/i;
@@ -157,6 +159,8 @@ export class NetworkMonitor {
   private consoleErrors: string[] = [];
   private consoleRead = 0;
   private unverifiedHits = 0;
+  /** Requests sent and not yet answered, with the time they started. */
+  private inflight = new Map<Request, number>();
   private context: BrowserContext;
 
   constructor(context: BrowserContext) {
@@ -186,9 +190,31 @@ export class NetworkMonitor {
       );
     });
     context.on("requestfailed", (req) => {
+      this.inflight.delete(req);
       const entry = this.byRequest.get(req);
       if (entry) entry.failed = req.failure()?.errorText ?? "failed";
     });
+    context.on("requestfinished", (req) => {
+      this.inflight.delete(req);
+    });
+  }
+
+  /**
+   * Resolves once the page has had no API call or page load in flight for
+   * `quietMs`, or after `maxMs`. Called after every action so the snapshot is
+   * taken when the page has answered, not while it is still loading. Requests
+   * that have been open for a long time (long polling) don't hold it up.
+   */
+  async waitForQuiet(maxMs = 5000, quietMs = 400): Promise<void> {
+    const started = Date.now();
+    let quietSince = Date.now();
+    while (Date.now() - started < maxMs) {
+      const now = Date.now();
+      const busy = [...this.inflight.values()].some((t) => now - t < LONG_POLL_MS);
+      if (busy) quietSince = now;
+      else if (now - quietSince >= quietMs) return;
+      await sleep(80);
+    }
   }
 
   /** Console errors are per page — call for every page (tab) of the run. */
@@ -215,6 +241,7 @@ export class NetworkMonitor {
       type,
       reqBody: maskBody(req.postData()),
     };
+    this.inflight.set(req, Date.now());
     this.byRequest.set(req, entry);
     this.log.push(entry);
     if (this.log.length > MAX_LOG) this.log.shift();

@@ -48,7 +48,7 @@ Order:
 5. Each step exactly once. finish — after the last step.
 
 EFFICIENCY — you have a limited number of steps, do not waste them:
-- navigate/click/fill/select/hover/press/scroll/scroll_to/wait/dismiss/upload_file ALREADY return a fresh snapshot in their result. Do NOT call snapshot after them — just read what they returned.
+- navigate/click/fill/select/hover/press/scroll/scroll_to/wait/wait_for/dismiss/upload_file ALREADY return a fresh snapshot in their result. Do NOT call snapshot after them — just read what they returned.
 - Call snapshot only for the FIRST page read, or to zoom into a block with near=.
 - Batch independent actions in ONE turn: e.g. emit several fill calls together to fill a form, then report. Fewer round-trips = more budget for real work.
 
@@ -92,6 +92,9 @@ You CANNOT see what is inside an attached file — you only hand it to the page.
 - Never say you read, parsed, checked or counted anything in the file. You did not.
 - Describe the step by what you actually did: "uploaded <name>".
 - For the result, quote what the PAGE reports after the upload (e.g. "Загружено 1 из 1", a file chip, an error). If the page reports nothing, say that — do not infer success from the file's content.
+
+Slow pages: every action already waits for the page to answer, but a slow network can take longer. If the snapshot after an action still shows the old page, a loader, a spinner or an empty area, that is NOT a failure yet — call wait_for with a text the expected state must show (timeout_s up to 60) and judge by what it returns. Login, form submit or page open counts as failed only after wait_for times out.
+Hover: controls that open on hover (notification bell, avatar or header menu, tooltip, submenu) are opened with hover, not click. Icon-only triggers often have no name in the snapshot — look for an unnamed button, link or image where the control sits (usually the header). After hover, the result already shows the opened panel: act inside it right away.
 
 Tabs: when an action opens a new browser tab you are switched to it automatically and told so; results list the open tabs while there is more than one. Use switch_tab(index) to go back.
 Dialogs: native alert/confirm/prompt dialogs are accepted (OK) automatically and their text is reported at the top of the action result — quote it as evidence when the step is about it. To press Cancel, or to type into a prompt, call handle_dialog BEFORE the action that opens the dialog.
@@ -280,6 +283,10 @@ function wirePage(ctx: ToolContext, page: Page): void {
 // step. Only the short observation goes to events/SSE; the tree goes to the model.
 async function actionResult(ctx: ToolContext, msg: string): Promise<ToolResult> {
   await adoptNewTab(ctx);
+  // let the page answer before reading it: a snapshot taken right after a click
+  // shows the old page or a loader, and the model takes that for a failure
+  await ctx.page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await ctx.net.waitForQuiet();
   const tree = await snapshot(ctx.page).catch(() => "");
   const tabs = tabsLine(ctx);
   const body = [msg, tabs, tree].filter(Boolean).join("\n\n");
@@ -483,7 +490,7 @@ async function executeTool(
     case "navigate":
       await page.goto(String(input.url), {
         waitUntil: "domcontentloaded",
-        timeout: 20000,
+        timeout: 60000, // slow networks and VPNs: 20s was not enough for a first load
       });
       return actionResult(ctx, `OK: navigated to ${input.url}`);
 
@@ -548,6 +555,8 @@ async function executeTool(
     case "hover": {
       const loc = await locate(page, input);
       await loc.hover({ timeout: 5000 });
+      // panels that open on hover usually do so after a short delay or animation
+      await page.waitForTimeout(450).catch(() => {});
       return actionResult(ctx, `OK: hovered ${input.name ?? input.ref}`);
     }
 
@@ -608,8 +617,27 @@ async function executeTool(
       await page.waitForTimeout(150);
       return actionResult(ctx, "OK: clicked empty area to close any open overlay");
 
+    case "wait_for": {
+      const text = String(input.text ?? "").trim();
+      if (!text) return { content: "Error: text is required — what should appear on the page." };
+      const gone = input.gone === true;
+      const seconds = Math.min(Math.max(Number(input.timeout_s) || 30, 1), 90);
+      const started = Date.now();
+      const target = page.getByText(text, { exact: false }).first();
+      const ok = await target
+        .waitFor({ state: gone ? "hidden" : "visible", timeout: seconds * 1000 })
+        .then(() => true, () => false);
+      const took = Math.round((Date.now() - started) / 1000);
+      return actionResult(
+        ctx,
+        ok
+          ? `OK: "${text}" ${gone ? "disappeared" : "appeared"} after ${took}s`
+          : `TIMEOUT: "${text}" ${gone ? "is still there" : "did not appear"} after ${seconds}s — the page shown below is its current state`,
+      );
+    }
+
     case "wait": {
-      const ms = Math.min(Number(input.ms) || 0, 5000);
+      const ms = Math.min(Number(input.ms) || 0, 10000);
       await page.waitForTimeout(ms);
       return actionResult(ctx, `OK: waited ${ms}ms`);
     }

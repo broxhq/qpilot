@@ -158,6 +158,8 @@ export interface Dict {
     up: string;
     right: string;
     left: string;
+    waitingFor: string;
+    waitingGone: string;
     switchingTab: string;
     nextDialog: string;
     dialogAccept: string;
@@ -326,6 +328,8 @@ const en: Dict = {
     up: "up",
     right: "right",
     left: "left",
+    waitingFor: "Waiting for",
+    waitingGone: "Waiting until it disappears:",
     switchingTab: "Switching to tab",
     nextDialog: "Next dialog:",
     dialogAccept: "OK",
@@ -494,6 +498,8 @@ const ru: Dict = {
     up: "вверх",
     right: "вправо",
     left: "влево",
+    waitingFor: "Ждёт появления",
+    waitingGone: "Ждёт, пока исчезнет:",
     switchingTab: "Переключение на вкладку",
     nextDialog: "Следующий диалог:",
     dialogAccept: "OK",
