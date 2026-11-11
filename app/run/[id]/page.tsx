@@ -298,6 +298,14 @@ export default function RunPage({ params }: PageProps) {
           </div>
         )}
 
+        {/* where the time went: with a slow model nearly all of it is waiting for its answers */}
+        {run?.stats && run.stats.calls > 0 && (
+          <p className="mt-1 text-[11px] font-mono tabular-nums text-subtle">
+            {t.statsModel} {formatDuration(run.stats.modelMs)} · {run.stats.calls} {t.statsCalls} · {t.statsBrowser}{" "}
+            {formatDuration(run.stats.browserMs)}
+          </p>
+        )}
+
         {steps.length > 0 && (
           <div className="relative mt-3 h-[3px] rounded-full bg-surface-hover overflow-hidden">
             <div
@@ -769,7 +777,11 @@ function describeAction(name?: string, input?: unknown, t: Dict = dict("en")): s
     }
     case "clear_mocks": return a.clearingMocks;
     case "set_offline": return p.offline === false ? a.goingOnline : a.goingOffline;
-    case "get_requests": return p.url ? `${a.readingRequests} "${p.url}"` : a.readingRequests;
+    case "get_requests": {
+      const find = p.find ?? p.url;
+      return find ? `${a.readingRequests} "${find}"` : a.readingRequests;
+    }
+    case "note": return `${a.noting} ${p.text ?? ""}`;
     case "get_console": return a.readingConsole;
     default:         return name ?? "action";
   }

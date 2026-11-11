@@ -17,6 +17,8 @@ export type ProviderConfig =
 export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
 
 const MAX_TOKENS = 2048;
+/** One model call; a normal answer takes seconds, the slowest full-length one about a minute. */
+export const MODEL_TIMEOUT_MS = 120_000;
 
 /**
  * The provider settings in config-file shape: the file if there is one,
@@ -210,9 +212,14 @@ function fromOpenAI(data: unknown): Anthropic.Message {
     content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
   }
 
+  const usage = (data as { usage?: { prompt_tokens?: number; completion_tokens?: number } })?.usage;
   return {
     content,
     stop_reason: choice?.finish_reason ?? "end_turn",
+    usage: {
+      input_tokens: usage?.prompt_tokens ?? 0,
+      output_tokens: usage?.completion_tokens ?? 0,
+    },
   } as unknown as Anthropic.Message;
 }
 
@@ -228,6 +235,9 @@ export async function callOpenAICompatible(
   try {
     res = await fetch(url, {
       method: "POST",
+      // a gateway that queues or hangs must not hold the run for minutes:
+      // give up and let callModel retry
+      signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${cfg.apiKey}`,
@@ -237,12 +247,18 @@ export async function callOpenAICompatible(
         max_tokens: MAX_TOKENS,
         messages: toOpenAIMessages(system, messages),
         tools: toOpenAITools(tools),
+        // "auto", not "required": forcing a tool call makes slow models faster
+        // (no free text), but the ones that reason in text before acting gave
+        // wrong verdicts without it. Fast models write no such text anyway.
         tool_choice: "auto",
       }),
     });
   } catch (err) {
     // Node's network errors are bare ("fetch failed") — say what was unreachable,
     // otherwise the run just shows two useless words.
+    if ((err as Error).name === "TimeoutError") {
+      throw new Error(`The model did not answer in ${MODEL_TIMEOUT_MS / 1000} s (${url}).`);
+    }
     const cause = (err as { cause?: { message?: string; code?: string } }).cause;
     const detail = cause?.code ?? cause?.message ?? (err as Error).message;
     throw new Error(

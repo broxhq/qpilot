@@ -157,6 +157,9 @@ provider you can skip setup entirely with an `ANTHROPIC_API_KEY` env var or a
   `QPILOT_ALLOWED_HOSTS`.
 - Browser visibility is per run: **Run** stays headless, **Run with preview** lets
   you watch Chrome work.
+- Speed is the model's speed: a run is mostly waiting for its answers. The run page
+  shows the split (model / browser / number of calls). A model that writes output
+  fast and supports tool calling makes runs several times shorter.
 - Runs are held in memory, last 50 only — restarting the server clears them.
 - A genuinely broken page still fails the run. That is the point.
 

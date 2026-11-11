@@ -54,7 +54,8 @@ interface LogEntry {
 }
 
 export interface RequestFilter {
-  url?: string;
+  /** Text in the URL or in the request body (RPC APIs name the method in the body). */
+  find?: string;
   method?: string;
   failedOnly?: boolean;
   limit?: number;
@@ -200,17 +201,19 @@ export class NetworkMonitor {
   }
 
   /**
-   * Resolves once the page has had no API call or page load in flight for
-   * `quietMs`, or after `maxMs`. Called after every action so the snapshot is
+   * Resolves once no API call or page load started after `since` has been in
+   * flight for `quietMs`, or after `maxMs`. Called after every action so the snapshot is
    * taken when the page has answered, not while it is still loading. Requests
    * that have been open for a long time (long polling) don't hold it up.
    */
-  async waitForQuiet(maxMs = 5000, quietMs = 400): Promise<void> {
+  async waitForQuiet(since: number, maxMs = 4000, quietMs = 300): Promise<void> {
     const started = Date.now();
     let quietSince = Date.now();
     while (Date.now() - started < maxMs) {
       const now = Date.now();
-      const busy = [...this.inflight.values()].some((t) => now - t < LONG_POLL_MS);
+      // only requests the action itself caused: a page that polls its server
+      // every few seconds would otherwise make every action wait the full maxMs
+      const busy = [...this.inflight.values()].some((t) => t >= since - 50 && now - t < LONG_POLL_MS);
       if (busy) quietSince = now;
       else if (now - quietSince >= quietMs) return;
       await sleep(80);
@@ -411,12 +414,13 @@ export class NetworkMonitor {
   // ── reading back ────────────────────────────────────────────────────────────
 
   requests(filter: RequestFilter = {}): string {
-    const match = filter.url ? urlMatcher(filter.url) : null;
+    const match = filter.find ? urlMatcher(filter.find) : null;
+    const inBody = (e: LogEntry) => !!filter.find && !!e.reqBody?.includes(filter.find);
     const method = filter.method?.toUpperCase();
     const limit = Math.min(Math.max(1, filter.limit ?? 15), 40);
     const hits = this.log.filter(
       (e) =>
-        (!match || match(e.url)) &&
+        (!match || match(e.url) || inBody(e)) &&
         (!method || e.method === method) &&
         (!filter.failedOnly || e.failed || (e.status ?? 0) >= 400),
     );

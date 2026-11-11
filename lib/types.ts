@@ -83,4 +83,16 @@ export interface Run {
   attachments: Attachment[];
   summary?: string;
   pending?: PendingQuestion | null;
+  /** Where the run's time went — shown on the run page so a slow model is visible as such. */
+  stats?: RunStats;
+}
+
+export interface RunStats {
+  /** Model round trips. */
+  calls: number;
+  modelMs: number;
+  /** Time spent acting in the browser (clicks, waiting for the page, snapshots). */
+  browserMs: number;
+  inputTokens: number;
+  outputTokens: number;
 }

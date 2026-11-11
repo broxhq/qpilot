@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { cleanupUploads, type StoredFile } from "./attachments";
 import {
+  addStats,
   askQuestion,
   checkPause,
   getFiles,
@@ -15,6 +16,7 @@ import { NetworkMonitor } from "./network";
 import { TOOLS, findAnchor, snapshot } from "./tools";
 import type { PlanGroup, RunEvent } from "./types";
 import {
+  MODEL_TIMEOUT_MS,
   callOpenAICompatible,
   parseRetryAfter,
   resolveProvider,
@@ -29,6 +31,11 @@ import {
 const MAX_ITERATIONS = 200;
 const STUCK_WINDOW = 24;
 const STUCK_DISTINCT = 4;
+// Tools that act on the page and return its tree through actionResult.
+const PAGE_ACTIONS = new Set([
+  "navigate", "click", "fill", "select", "hover", "press", "scroll", "scroll_to",
+  "dismiss", "wait", "wait_for", "upload_file", "switch_tab",
+]);
 // Actions on a single step before the agent is told to wrap it up.
 const STEP_ACTION_BUDGET = 15;
 const CONTEXT_BUDGET_CHARS = 64_000;
@@ -38,82 +45,59 @@ const MAX_BACKOFF_MS = 30_000;
 
 type ReportStatus = "pass" | "fail" | "warn";
 
-const SYSTEM = `You are a QA agent. Execute the test case in the browser strictly using tools.
+// Every line here is sent with every model call and the model is the slow part
+// of a run, so the prompt is kept to rules that change behaviour. Tool-specific
+// details live in the tool descriptions (lib/tools.ts).
+const SYSTEM = `You are a QA agent. You execute a manual test case in a real browser with tools and give a verdict for every step. Answer with tool calls; if you need to reason, one short sentence at most.
 
-Order:
-1. set_plan — first call. groups=[{title?,steps}], one group per TC. steps without leading numbers.
-2. navigate to the URL from the test case. Browser starts at about:blank — no page until you navigate.
-3. Preconditions (login, opening a section) — execute after navigate, do not include in plan, do not call report_step. If precondition fails — step 1 = fail, then finish immediately.
-4. Each step: act → read the snapshot returned BY that action → report_step(num=sequential, expected=the step's expected result copied from the test case, evidence=what you actually observed).
-5. Each step exactly once. finish — after the last step.
+FLOW
+1. set_plan first: one group per test case, steps in the tester's words (action + expected result). Preconditions (login, opening a section) are not steps.
+2. navigate to the URL from the test case (the browser starts on about:blank) and do the preconditions.
+3. For each step, in order: do what it says → read the page tree returned by the action → report_step.
+4. finish after the last step.
 
-EFFICIENCY — you have a limited number of steps, do not waste them:
-- navigate/click/fill/select/hover/press/scroll/scroll_to/wait/wait_for/dismiss/upload_file ALREADY return a fresh snapshot in their result. Do NOT call snapshot after them — just read what they returned.
-- Call snapshot only for the FIRST page read, or to zoom into a block with near=.
-- Batch independent actions in ONE turn: e.g. emit several fill calls together to fill a form, then report. Fewer round-trips = more budget for real work.
+SPEED — every turn is a slow round trip, so pack turns
+- Every action (navigate, click, fill, select, hover, press, scroll, wait_for, upload_file…) returns the fresh page tree. Never call snapshot just to look at the page after an action.
+- Put independent calls in ONE turn: all fills of a form plus its submit click; report_step for the step you have just verified plus the first action(s) of the next step; the last report_step plus finish.
+- Only the LAST page action of a turn returns the page tree, so put last the action whose result you need to read.
+- report_step is about results you have ALREADY seen: never in the same turn after an action of that step.
 
-LANGUAGE — match the test case. Every human-readable string you write (plan step text, report_step description and evidence, finish summary, and any text you emit) MUST be in the SAME language the test case is written in. A Russian test case gets Russian descriptions, a Spanish one gets Spanish. This is what the person reading the report sees. Quotes taken from the page keep the page's own wording. Status values, tool names and refs stay as they are.
+VERDICTS
+- pass only when the expected result is literally in what you received. Otherwise fail. warn = done, but the outcome is unclear.
+- report_step: num from the plan; expected = the step's expected result copied from the test case; evidence = what you saw, quoting the page verbatim, one or two sentences; status last, decided from that evidence. Never write refs (e12) in any text.
+- Every result lists "Changes since the previous page tree" (− was, + is now). Use it for "changed / did not change" checks and quote the changed lines as evidence; "NONE" means the action changed nothing.
+- A failed step does not end the run: go on with the next step. Only a failed precondition ends it.
+- Each step is reported exactly once. A failed step is reported as fail at once — do not try variations to turn it into a pass.
+- A precondition fails (cannot log in, the page does not load) → report step 1 as fail and finish.
+- Write plan steps, evidence and the summary in the language of the test case; quotes keep the page's wording.
 
-SCOPE — do exactly what the step says and nothing else:
-- Perform the actions the step names, check the expected result it names, report, move on. No extra checks, no exploring, no "while I'm here".
-- Do NOT restore, undo or clean up anything unless the test case tells you to. A switch you toggled stays toggled.
-- Follow the step literally: "click 400 px to the right of X" means click with dx=400, not a click on X or on its row.
-- If a step cannot be done as written, report it (fail, or warn when the outcome is unclear) and say why — do not replace it with a different action.
-- A step that fails is reported as fail right away: do not keep trying variations to turn it into a pass.
-- report_step.description: one short line, what was done. No URLs, ids or element internals.
+SCOPE — do exactly what the step says and nothing else
+- No extra checks, no exploring, no cleanup. Do not undo what a step did (a switch you toggled stays toggled) unless the test case says so.
+- Follow the wording literally: "click 400 px to the right of X" is a click with dx=400, not a click on X.
+- A step cannot be done as written → report fail (or warn) and say why. Do not substitute another action.
+- Never repeat a submitting action (save, create, send, pay, delete, confirm): one click per step. If the page then shows an error or nothing at all, report fail with the page's message — the request may have gone through, and a retry creates a duplicate.
+- A step says to remember a value or to compare with an earlier state → save it with note BEFORE the page changes. Old page trees are dropped from your context.
 
-Statuses: pass | fail | warn.
-Critical fail (login, form open, navigate without loading): finish immediately, do not report the rest.
+ELEMENTS
+- click/fill/select/hover need a ref from the MOST RECENT page tree; older refs are stale. Refs inside an iframe look like f1e2 — use them as shown.
+- The tree is the WHOLE page, not just the visible part: scrolling never adds elements. To find a control in a named block, or when the tree is truncated, use snapshot(near="block title"). Scroll only for lazy-loaded content.
+- <select> → select. Something that opens on hover (bell, avatar menu, tooltip, submenu) → hover, then act inside the opened panel; an icon-only trigger has no name — look for an unnamed button, link or image in the header.
+- "intercepts pointer events" means an overlay covers the target: dismiss, then retry.
+- The page still shows the old state, a loader or a spinner → wait_for(a text the new state must show, timeout_s up to 60). It is a failure only after wait_for times out.
+- A new tab: you are moved to it automatically; switch_tab(index) goes back. Native dialogs are accepted (OK) automatically and their text is at the top of the result; to press Cancel or type into a prompt call handle_dialog BEFORE the action.
 
-DO NOT HALLUCINATE:
-- pass only if the expected result is actually present in the snapshot.
-- evidence — verbatim quote from the snapshot.
-- No element → fail, do not invent.
+FILES
+- A step needs a file → upload_file with the name of an attached file. You cannot see file contents: never say you read or checked them; quote what the page shows after the upload.
 
-SIDE EFFECTS — never repeat a submitting action. Buttons that save, create, submit, send, pay, delete or confirm change data on the server: click such a button ONCE per step. If the page then shows an error, a timeout, "session expired" or no confirmation, do NOT click it again — report the step as fail with the page's message as evidence. The request may have gone through even though the UI says it failed, and every retry can create a duplicate record. Repeat a submit only if the test case explicitly tells you to.
+NETWORK — only when the test case asks to mock, break, slow down or inspect requests
+- mock_request BEFORE the action that sends the request. Body: the one from the test case; otherwise let the real request happen once, read it with get_requests and reuse its field names — that is preparation, not the step: afterwards set the mock, repeat the step's action and judge the step by the mocked page. To change a few fields use patch. Invent a body only when the real request cannot be made. Read what mock_request returns: it names missing or wrong fields — fix them.
+- Mocks persist: clear_mocks when the test case no longer needs them. set_offline(true) → check → set_offline(false).
+- "The request was sent / with this body / returned this status" → get_requests(find=endpoint or method name). Quote method, URL and status as evidence. A mock that matched 0 requests has a wrong URL — fix it, do not report pass.
 
-Elements: ref=[eN] is required for click/fill/select/hover, taken from the MOST RECENT snapshot (including the one your last action returned). Older refs are stale. An element inside an iframe has a frame-prefixed ref like [ref=f1e2] instead of [ref=eN] — the snapshot already includes iframe content, use that ref exactly as shown, no special handling needed.
-For <select> dropdowns use select, not click.
-If a click fails with "intercepts pointer events", an open overlay (dropdown/popover) is covering the target: call dismiss to click an empty corner (closes it), then snapshot and retry. Custom dropdowns usually ignore Escape.
-
-Finding elements (IMPORTANT): the snapshot is the WHOLE loaded page, not just the visible part. Scrolling does NOT add elements to it — if a control exists it's already in the tree. So DO NOT scroll repeatedly to "find" a button.
-- To act on a control in a named section (e.g. "Show all" in the "Top ads" block), call snapshot with near='Top ads' — it returns just that block's tree with refs, never truncated, and disambiguates duplicate labels (there can be many "Show all"). Then click the ref. This is the right tool for "do X in section Y".
-- If a snapshot is truncated, use near=… to zoom in — never scroll to fix truncation.
-- Scroll only to: trigger lazy-loaded / infinite-scroll content that isn't in the DOM yet, or position something for a screenshot.
-
-Scrolling:
-- scroll_to(text or ref) — auto-scrolls whatever container holds the target (page, inner div, or sideways) until it's visible.
-- scroll(y, x?, ref?) for pixel scrolling. No ref = main window. To scroll a block INSIDE the page (list, panel, modal body with its own scrollbar), pass ref of ANY element inside that block — the scrollable container is found automatically. Use x for horizontal (carousels, wide tables).
-- scroll returns position and limits (e.g. "Vertical 800/2400px") and flags edges/no-movement — read it: if the window didn't move, content is in an inner block, retry with a ref inside it.
-Do not write [ref=eN] or [ref=f1eN] in description/evidence.
-
-Uploading files: when a step needs a file (photo, CSV, document), use upload_file with the name of a file attached to this run — never type a path into a text field. The <input type=file> is usually hidden and absent from the snapshot, so call upload_file WITHOUT ref first; pass ref (of the visible "Choose file" button or dropzone) only if that fails. Never ask_user for a file.
-You CANNOT see what is inside an attached file — you only hand it to the page. You know its name and size, nothing else. So:
-- Never say you read, parsed, checked or counted anything in the file. You did not.
-- Describe the step by what you actually did: "uploaded <name>".
-- For the result, quote what the PAGE reports after the upload (e.g. "Загружено 1 из 1", a file chip, an error). If the page reports nothing, say that — do not infer success from the file's content.
-
-Slow pages: every action already waits for the page to answer, but a slow network can take longer. If the snapshot after an action still shows the old page, a loader, a spinner or an empty area, that is NOT a failure yet — call wait_for with a text the expected state must show (timeout_s up to 60) and judge by what it returns. Login, form submit or page open counts as failed only after wait_for times out.
-Hover: controls that open on hover (notification bell, avatar or header menu, tooltip, submenu) are opened with hover, not click. Icon-only triggers often have no name in the snapshot — look for an unnamed button, link or image where the control sits (usually the header). After hover, the result already shows the opened panel: act inside it right away.
-
-Tabs: when an action opens a new browser tab you are switched to it automatically and told so; results list the open tabs while there is more than one. Use switch_tab(index) to go back.
-Dialogs: native alert/confirm/prompt dialogs are accepted (OK) automatically and their text is reported at the top of the action result — quote it as evidence when the step is about it. To press Cancel, or to type into a prompt, call handle_dialog BEFORE the action that opens the dialog.
-
-Network tools — use them ONLY when the test case asks to mock, intercept, break, slow down or inspect requests:
-- mock_request BEFORE the action that sends the request.
-- Response body: never guess field names when you can look them up. The test case gives the body → use it as is. Otherwise take the shape from the REAL response: if that request has not happened yet in this run, let it happen once without a mock, read it with get_requests, then mock with the same field names and your own values. To change a few fields of a real response prefer patch — it needs no shape at all. Invent a body from scratch only when the real request cannot be made.
-- Read what mock_request returns: it compares your body with the real response and names missing or wrong fields — fix the body before going on.
-- Mocks persist. Call clear_mocks once the test case no longer needs them (always before moving on to the next test case).
-- set_offline(true/false) for no-connection checks; turn the network back on afterwards.
-- get_requests is the Network tab: use it when the expected result is about a request (it was sent, its body, its status). Quote method, URL and status as evidence. If a mock matched 0 requests, the URL pattern is wrong — fix it instead of reporting pass.
-- get_console lists JS errors; use it when the test case asks about console errors.
-
-ask_user: only for OTP/captcha (not from the test case). secret=true for passwords/codes. One value at a time.
-
-TOOL CALLS ONLY. Do not write text.`;
+ask_user — only for a value the test case does not give and you cannot know (login, phone, OTP, captcha). secret=true for passwords and codes. One value per question.`;
 
 const NUDGE =
-  "You responded with text but did not call a tool. Continue executing the test case ONLY via tool calls (navigate/snapshot/click/fill/report_step). When all steps are done — call finish. Do not write plain text.";
+  "You answered with text and no tool call. Go on with the test case using tool calls only; when every step is reported, call finish.";
 const MAX_EMPTY_TURNS = 3;
 
 interface ToolContext {
@@ -126,6 +110,12 @@ interface ToolContext {
   files: StoredFile[];
   /** A tab opened by the page that the agent hasn't been moved to yet. */
   incoming: Page | null;
+  /** The page tree the model saw last — the next result says what changed against it. */
+  lastTree: string | null;
+  /** false for all but the last page action of a turn: only that one returns the page tree. */
+  wantTree: boolean;
+  /** When the current tool call started — settling waits only for requests sent after it. */
+  actionStarted: number;
   /** One-shot answer for the next native dialog, set by handle_dialog. */
   dialogPolicy: { action: "accept" | "dismiss"; text?: string } | null;
   /** Things that happened on their own (dialog, new tab) — prepended to the next tool result. */
@@ -286,11 +276,57 @@ async function actionResult(ctx: ToolContext, msg: string): Promise<ToolResult> 
   // let the page answer before reading it: a snapshot taken right after a click
   // shows the old page or a loader, and the model takes that for a failure
   await ctx.page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-  await ctx.net.waitForQuiet();
+  if (!ctx.wantTree) {
+    // not the last action of the turn: the next one follows at once, and reading
+    // the page here would cost a snapshot nobody looks at
+    await ctx.net.waitForQuiet(ctx.actionStarted, 1200);
+    return { content: `${msg}\n(the page tree comes with the last action of this turn)`, observation: msg };
+  }
+  await ctx.net.waitForQuiet(ctx.actionStarted, 4000);
   const tree = await snapshot(ctx.page).catch(() => "");
   const tabs = tabsLine(ctx);
-  const body = [msg, tabs, tree].filter(Boolean).join("\n\n");
+  const changes = tree ? describeChanges(ctx.lastTree, tree) : "";
+  if (tree) ctx.lastTree = tree;
+  const body = [msg, tabs, changes, tree].filter(Boolean).join("\n\n");
   return { content: body, observation: msg };
+}
+
+const MAX_CHANGE_LINES = 40;
+
+/**
+ * What the action changed on the page, as removed (−) and added (+) lines of the
+ * page tree. Spotting that one "[checked]" went missing among hundreds of lines
+ * is exactly where a model slips, and "did the state change?" is what most
+ * steps ask — so the comparison is done here and handed over ready.
+ */
+function describeChanges(before: string | null, after: string): string {
+  if (before === null) return "";
+  const norm = (t: string) =>
+    t
+      .split("\n")
+      .map((l) => l.replace(/\s*\[ref=[^\]]+\]/g, "").trim())
+      .filter((l) => l && !l.startsWith("Page snapshot"));
+  const a = norm(before);
+  const b = norm(after);
+  if (a[0] !== b[0]) return `Page changed: ${a[0]} → ${b[0]}`; // the "URL: …" line
+  const count = (lines: string[]) => {
+    const m = new Map<string, number>();
+    for (const l of lines) m.set(l, (m.get(l) ?? 0) + 1);
+    return m;
+  };
+  const ca = count(a);
+  const cb = count(b);
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const [l, n] of ca) for (let i = cb.get(l) ?? 0; i < n; i++) removed.push(l);
+  for (const [l, n] of cb) for (let i = ca.get(l) ?? 0; i < n; i++) added.push(l);
+  if (removed.length === 0 && added.length === 0) {
+    return "Changes since the previous page tree: NONE — the page looks exactly as before.";
+  }
+  const lines = [...removed.map((l) => `− ${l}`), ...added.map((l) => `+ ${l}`)];
+  const shown = lines.slice(0, MAX_CHANGE_LINES);
+  const more = lines.length > shown.length ? `\n… and ${lines.length - shown.length} more changed lines` : "";
+  return `Changes since the previous page tree (− was, + is now):\n${shown.join("\n")}${more}`;
 }
 
 // Signature of a tool call for loop detection: tool + its semantic target +
@@ -499,6 +535,7 @@ async function executeTool(
         page,
         typeof input.near === "string" ? input.near : undefined,
       );
+      if (typeof input.near !== "string") ctx.lastTree = tree;
       // don't push the full tree to events/SSE — the UI doesn't render it anyway
       return { content: tree, observation: `Page read (${tree.length} chars)` };
     }
@@ -713,6 +750,11 @@ async function executeTool(
       );
     }
 
+    case "note": {
+      const text = String(input.text ?? "").trim();
+      return { content: text ? "OK: noted — it stays in your context." : "Error: text is required." };
+    }
+
     case "switch_tab": {
       const pages = ctx.context.pages();
       const target = pages[Number(input.index) - 1];
@@ -778,7 +820,7 @@ async function executeTool(
 
     case "get_requests": {
       const list = ctx.net.requests({
-        url: typeof input.url === "string" && input.url.trim() ? input.url.trim() : undefined,
+        find: String(input.find ?? input.url ?? "").trim() || undefined,
         method: typeof input.method === "string" ? input.method : undefined,
         failedOnly: input.failed_only === true,
         limit: Number(input.limit) || undefined,
@@ -848,7 +890,11 @@ async function executeTool(
       const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
       const step = {
         num,
-        description: clean(input.description).replace(/^\s*\d+[.)]\s*/, ""),
+        // the card keeps the tester's wording from the plan unless the model says the step went differently
+        description:
+          (input.description ? clean(input.description).replace(/^\s*\d+[.)]\s*/, "") : "") ||
+          planned?.description ||
+          `Step ${num}`,
         status,
         expected: input.expected ? clean(input.expected) : undefined,
         evidence: input.evidence ? clean(input.evidence) : undefined,
@@ -984,7 +1030,7 @@ export async function runAgent(
   const cfg = resolveProvider();
   const client =
     cfg.kind === "anthropic"
-      ? new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
+      ? new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, timeout: MODEL_TIMEOUT_MS })
       : null;
 
   try {
@@ -1009,6 +1055,9 @@ export async function runAgent(
       step: { current: 1 },
       files,
       incoming: null,
+      lastTree: null,
+      wantTree: true,
+      actionStarted: Date.now(),
       dialogPolicy: null,
       notices: [],
       secrets: new Set(),
@@ -1041,7 +1090,7 @@ export async function runAgent(
           testCase +
           "\n```" +
           attachmentNote +
-          "\n\nFirst call set_plan — break into groups by test case (groups=[{title, steps}]) to show the plan. Then open the starting URL via navigate (browser starts at about:blank), handle login if needed, and execute steps in order, calling report_step with the sequential num for each. If an OTP is needed — ask_user. Finish with finish.\n\n" +
+          "\n\n" +
           languageNote,
       },
     ];
@@ -1058,7 +1107,14 @@ export async function runAgent(
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       await checkPause(runId);
       const trimmed = compactHistory(messages);
+      const callStarted = Date.now();
       const response = await callModel(cfg, client, trimmed);
+      addStats(runId, {
+        calls: 1,
+        modelMs: Date.now() - callStarted,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      });
 
       const textContent = response.content
         .flatMap((b) => (b.type === "text" ? [b.text] : []))
@@ -1115,9 +1171,29 @@ export async function runAgent(
       let progressedThisTurn = false;
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
-      for (const b of toolUseBlocks) {
+      // Only the last page action of the turn reads the page back (see actionResult).
+      const lastPageAction = toolUseBlocks.map((t) => PAGE_ACTIONS.has(t.name)).lastIndexOf(true);
+      let actedThisTurn = false;
+
+      for (const [index, b] of toolUseBlocks.entries()) {
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
+        ctx.wantTree = index === lastPageAction;
+        ctx.actionStarted = Date.now();
+
+        // A verdict given in the same turn as the action it judges is a guess:
+        // the model has not seen the result yet.
+        if (name === "report_step" && actedThisTurn) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: b.id,
+            content:
+              "Error: not recorded. This turn also performed page actions whose result you have not seen yet. Read the page tree returned by the last action, then call report_step.",
+            is_error: true,
+          });
+          continue;
+        }
+        if (PAGE_ACTIONS.has(name)) actedThisTurn = true;
 
         sigsSinceProgress.push(actionSig(name, input));
 
@@ -1151,8 +1227,11 @@ export async function runAgent(
           stepNum,
         });
 
+        // time waiting for a human answer is not the browser's
+        const toolStarted = name === "ask_user" ? 0 : Date.now();
         try {
           const ret = await executeTool(name, input, ctx);
+          if (toolStarted) addStats(runId, { browserMs: Date.now() - toolStarted });
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
@@ -1168,10 +1247,14 @@ export async function runAgent(
           if (name === "navigate" || name === "ask_user") progressedThisTurn = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          // after a failed action the model needs to see the page: give it the
+          // tree now instead of making it spend a turn on snapshot
+          const tree =
+            index === lastPageAction ? await snapshot(ctx.page).catch(() => "") : "";
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
-            content: withNotices(ctx, `Error: ${message}`),
+            content: withNotices(ctx, tree ? `Error: ${message}\n\n${tree}` : `Error: ${message}`),
             is_error: true,
           });
           pushEvent(runId, {

@@ -45,6 +45,9 @@ export interface Dict {
   infoDialog: string;
   infoAccepted: string;
   infoDismissed: string;
+  statsModel: string;
+  statsCalls: string;
+  statsBrowser: string;
   showReasoning: string;
   hideReasoning: string;
   copyReport: string;
@@ -158,6 +161,7 @@ export interface Dict {
     up: string;
     right: string;
     left: string;
+    noting: string;
     waitingFor: string;
     waitingGone: string;
     switchingTab: string;
@@ -201,6 +205,9 @@ const en: Dict = {
   infoDialog: "Browser dialog",
   infoAccepted: "OK pressed",
   infoDismissed: "Cancel pressed",
+  statsModel: "model",
+  statsCalls: "calls",
+  statsBrowser: "browser",
   showReasoning: "Show agent reasoning",
   hideReasoning: "Hide agent reasoning",
   copyReport: "Copy report",
@@ -328,6 +335,7 @@ const en: Dict = {
     up: "up",
     right: "right",
     left: "left",
+    noting: "Noting:",
     waitingFor: "Waiting for",
     waitingGone: "Waiting until it disappears:",
     switchingTab: "Switching to tab",
@@ -371,6 +379,9 @@ const ru: Dict = {
   infoDialog: "Диалог браузера",
   infoAccepted: "нажато OK",
   infoDismissed: "нажата «Отмена»",
+  statsModel: "модель",
+  statsCalls: "вызовов",
+  statsBrowser: "браузер",
   showReasoning: "Показать рассуждения агента",
   hideReasoning: "Скрыть рассуждения агента",
   copyReport: "Скопировать отчёт",
@@ -498,6 +509,7 @@ const ru: Dict = {
     up: "вверх",
     right: "вправо",
     left: "влево",
+    noting: "Запоминает:",
     waitingFor: "Ждёт появления",
     waitingGone: "Ждёт, пока исчезнет:",
     switchingTab: "Переключение на вкладку",

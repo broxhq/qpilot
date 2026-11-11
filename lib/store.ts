@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { StoredFile } from "./attachments";
 import { detectLanguage } from "./i18n";
-import type { PendingQuestion, PlanGroup, Run, RunEvent } from "./types";
+import type { PendingQuestion, PlanGroup, Run, RunEvent, RunStats } from "./types";
 
 // All state for one run lives in a single entry: the Run, its emitter, pending
 // questions, the pause gate, screenshots (JPEG buffers served via
@@ -73,6 +73,14 @@ export function listRuns(): Pick<Run, "id" | "createdAt" | "status" | "title">[]
   return [...entries.values()]
     .map(({ run }) => ({ id: run.id, createdAt: run.createdAt, status: run.status, title: run.title }))
     .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** Add to the run's timing counters (see RunStats). */
+export function addStats(id: string, delta: Partial<RunStats>): void {
+  const run = getRun(id);
+  if (!run) return;
+  const s = (run.stats ??= { calls: 0, modelMs: 0, browserMs: 0, inputTokens: 0, outputTokens: 0 });
+  for (const [k, v] of Object.entries(delta) as [keyof RunStats, number][]) s[k] += v;
 }
 
 export function setPlan(id: string, groups: PlanGroup[]): void {

@@ -17,29 +17,27 @@ export async function findAnchor(page: Page, wanted: string): Promise<Locator | 
   return null;
 }
 
+// Descriptions are part of every model call, so they stay short: what the tool
+// does and the one thing that is easy to get wrong. Behaviour rules live in the
+// system prompt (lib/agent.ts).
+const ref = (what = "Element") => ({ type: "string", description: `${what} ref from the latest page tree, e.g. e12` });
+const label = { type: "string", description: "Short human-readable name for the log, e.g. 'Login button'" };
+
 export const TOOLS: Anthropic.Tool[] = [
   {
     name: "set_plan",
     description:
-      "CALL FIRST. Plan = array of groups, one per test case (TC-01, TC-02, …). If there is only one test case — one group. Put step text in steps WITHOUT leading numbers; do not split or add service sub-steps like 'open page'.",
+      "First call of the run. One group per test case; each step is the tester's step (action and expected result) without a leading number. Preconditions are not steps.",
     input_schema: {
       type: "object",
       properties: {
         groups: {
           type: "array",
-          description: "One group per test case, in order.",
           items: {
             type: "object",
             properties: {
-              title: {
-                type: "string",
-                description: "Test case title, e.g. 'TC-01. Missing section…'. Omit if unnamed.",
-              },
-              steps: {
-                type: "array",
-                items: { type: "string" },
-                description: "Steps of the test case, one action+check per item, no leading numbers.",
-              },
+              title: { type: "string", description: "Test case title; omit if it has none." },
+              steps: { type: "array", items: { type: "string" } },
             },
             required: ["steps"],
           },
@@ -50,261 +48,204 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "navigate",
-    description: "Open a URL in the browser.",
-    input_schema: {
-      type: "object",
-      properties: { url: { type: "string" } },
-      required: ["url"],
-    },
+    description: "Open a URL. Returns the page tree.",
+    input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
   {
     name: "snapshot",
     description:
-      "Get the page state: URL, title, and ARIA tree with ref=[eN] on each element — pass those refs to click/fill. The tree covers the WHOLE loaded page, not just the visible viewport — scrolling does NOT add elements to it. Call after every page change. If the tree is truncated or you need a specific section, pass `near` to zoom into just that block (e.g. near='Top ads') — this is unambiguous and never truncated, use it instead of scrolling to hunt for a control.",
+      "Read the page tree again. Rarely needed: every action already returns it. Use near to get only the block around a text (never truncated, disambiguates repeated labels), or when a result came without a tree.",
     input_schema: {
       type: "object",
       properties: {
-        near: {
-          type: "string",
-          description: "Optional: visible text of a section/heading to scope the snapshot to that block only, e.g. 'Top ads'. Returns the surrounding container's subtree with refs.",
-        },
+        near: { type: "string", description: "Visible text of a heading or block to zoom into, e.g. 'Top ads'." },
       },
     },
   },
   {
     name: "click",
     description:
-      "Click an element. ref from snapshot is required (e.g. e12). By default the click lands on the element's centre. To click NEXT TO an element — empty space to the right of a switch, a point left of a label — pass dx/dy: the click then lands that many pixels away from the element's centre, on whatever is there.",
+      "Click an element (its centre). With dx/dy the click lands that many pixels away from the centre, on whatever is there — for clicking NEXT TO an element.",
     input_schema: {
       type: "object",
       properties: {
-        ref: { type: "string", description: "Element ref from snapshot, e.g. e12" },
-        name: { type: "string", description: "Human-readable label for the log, e.g. 'Login button'" },
-        dx: { type: "number", description: "Horizontal offset from the element's centre in px: positive = right, negative = left." },
-        dy: { type: "number", description: "Vertical offset from the element's centre in px: positive = down, negative = up." },
+        ref: ref(),
+        name: label,
+        dx: { type: "number", description: "Offset from the centre in px, positive = right." },
+        dy: { type: "number", description: "Offset from the centre in px, positive = down." },
       },
       required: ["ref"],
     },
   },
   {
     name: "fill",
-    description: "Type text into a field. ref from snapshot is required (e.g. e7).",
+    description: "Type text into a field, replacing what is there.",
     input_schema: {
       type: "object",
-      properties: {
-        ref: { type: "string", description: "Field ref from snapshot, e.g. e7" },
-        value: { type: "string", description: "Text to type" },
-        name: { type: "string", description: "Human-readable field label for the log, e.g. 'Username'" },
-      },
+      properties: { ref: ref("Field"), value: { type: "string" }, name: label },
       required: ["ref", "value"],
     },
   },
   {
-    name: "press",
-    description: "Press a key (Enter, Tab, Escape, ArrowDown, etc.)",
+    name: "select",
+    description: "Choose an option of a <select> dropdown, by its value or visible label.",
     input_schema: {
       type: "object",
-      properties: { key: { type: "string" } },
-      required: ["key"],
+      properties: { ref: ref("<select>"), value: { type: "string" }, name: label },
+      required: ["ref", "value"],
     },
   },
   {
-    name: "dismiss",
+    name: "hover",
     description:
-      "Close an open overlay (dropdown, popover, tooltip, multi-select panel) by clicking an empty spot in the page corner — i.e. a click OUTSIDE the overlay. Use this when a click fails with 'intercepts pointer events' (an overlay is covering your target) and Escape doesn't help. After calling, take a fresh snapshot.",
+      "Move the mouse over an element — for anything that opens on hover (notification bell, avatar menu, tooltip, submenu). The result shows the opened panel.",
+    input_schema: { type: "object", properties: { ref: ref(), name: label }, required: ["ref"] },
+  },
+  {
+    name: "press",
+    description: "Press a key: Enter, Tab, Escape, ArrowDown…",
+    input_schema: { type: "object", properties: { key: { type: "string" } }, required: ["key"] },
+  },
+  {
+    name: "dismiss",
+    description: "Close an open dropdown/popover by clicking an empty corner of the page. Use when a click fails with 'intercepts pointer events'.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "wait_for",
     description:
-      "Wait until a text appears on the page (or disappears, with gone=true), up to timeout_s seconds. Use it on slow pages: after logging in, submitting a form or opening a section, when the snapshot still shows the old page, a loader or a spinner. Pass a text the expected state must contain (a heading, a button label). Returns as soon as the text is there, with a fresh snapshot.",
+      "Wait until a text appears (or, with gone=true, disappears) — for slow pages that still show the old state or a loader. Returns as soon as it happens, with the page tree.",
     input_schema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "Visible text to wait for, e.g. a heading of the page that should open." },
-        gone: { type: "boolean", description: "true = wait until the text disappears (a loader, 'Loading…')." },
-        timeout_s: { type: "number", description: "How long to wait, in seconds. Default 30, max 90." },
+        text: { type: "string", description: "Text the expected state must show, e.g. a heading." },
+        gone: { type: "boolean" },
+        timeout_s: { type: "number", description: "Default 30, max 90." },
       },
       required: ["text"],
     },
   },
   {
     name: "wait",
-    description: "Wait N milliseconds (max 10000). Prefer wait_for when you know what should appear.",
-    input_schema: {
-      type: "object",
-      properties: { ms: { type: "number" } },
-      required: ["ms"],
-    },
-  },
-  {
-    name: "select",
-    description: "Choose an option in a <select> dropdown. ref from snapshot is required.",
-    input_schema: {
-      type: "object",
-      properties: {
-        ref: { type: "string", description: "ref of the <select> element from snapshot, e.g. e9" },
-        value: { type: "string", description: "Option value or visible label to select" },
-        name: { type: "string", description: "Human-readable label for the log" },
-      },
-      required: ["ref", "value"],
-    },
-  },
-  {
-    name: "hover",
-    description: "Hover the mouse over an element. Use it for anything that opens on hover rather than on click: a notification bell, an avatar or header menu, a tooltip, a submenu. The result shows the page with the opened panel; then click inside it. ref from snapshot is required.",
-    input_schema: {
-      type: "object",
-      properties: {
-        ref: { type: "string", description: "ref of the element from snapshot, e.g. e5" },
-        name: { type: "string", description: "Human-readable label for the log" },
-      },
-      required: ["ref"],
-    },
+    description: "Wait N ms (max 10000). Prefer wait_for when you know what should appear.",
+    input_schema: { type: "object", properties: { ms: { type: "number" } }, required: ["ms"] },
   },
   {
     name: "scroll_to",
-    description: "Scroll until a target element is visible. PREFERRED over pixel scroll when you know what you're looking for. Automatically scrolls the right container (page, inner scrollable div, or sideways) to reveal it. Target by text OR by ref. After calling, take a snapshot to get a fresh ref.",
+    description: "Scroll until an element is visible, whatever container holds it. Target by text or ref.",
     input_schema: {
       type: "object",
-      properties: {
-        text: { type: "string", description: "Visible text of the target element or section heading, e.g. 'Top ads' or 'Show all'. Use a short, unique substring." },
-        ref: { type: "string", description: "Alternatively, ref of the target from a snapshot (e.g. e14) — use for icons/unlabeled elements with no stable text." },
-      },
+      properties: { text: { type: "string" }, ref: ref() },
     },
   },
   {
     name: "scroll",
-    description: "Scroll by a pixel offset. Without ref — scrolls the main window. With ref — scrolls the nearest scrollable block CONTAINING that element (pass any ref inside the block you want to scroll; the actual scroll container is found automatically). Returns the new position and whether the end is reached. Prefer scroll_to when you know the target.",
+    description:
+      "Scroll by pixels. Without ref — the window; with ref of any element inside a scrollable block — that block. Returns position and limits. Only for lazy-loaded content: scrolling never adds elements to the page tree.",
     input_schema: {
       type: "object",
       properties: {
-        y: { type: "number", description: "Vertical scroll in pixels (positive = down, negative = up). 0 for pure horizontal." },
-        x: { type: "number", description: "Horizontal scroll in pixels (positive = right, negative = left). Default 0." },
-        ref: { type: "string", description: "Optional ref of any element inside the block to scroll, e.g. e14. Omit to scroll the main window." },
+        y: { type: "number", description: "Positive = down." },
+        x: { type: "number", description: "Positive = right." },
+        ref: ref("Any element inside the block to scroll"),
       },
-      required: ["y"],
     },
   },
   {
     name: "upload_file",
     description:
-      "Attach one of the run's files to a file-upload control on the page. This hands the file to the page — it does NOT reveal the file's contents to you. Only files listed as attached to this run can be used; give the file name exactly as listed. Works with a plain <input type=file> and with custom 'Choose file' buttons that open the OS file dialog. Omit ref if the page has just one upload control; pass ref when there are several, or the ref of the visible button/dropzone that opens the file dialog.",
+      "Give one of the run's attached files to an upload control. Omit ref first (file inputs are usually hidden); pass ref of the file input or of the button/dropzone only if that fails. You cannot see the file's contents.",
     input_schema: {
       type: "object",
       properties: {
-        file: {
-          type: "string",
-          description: "Name of an attached file, exactly as listed in the task, e.g. 'users.csv'",
-        },
-        ref: {
-          type: "string",
-          description:
-            "Optional ref of the file input, or of the button/dropzone that opens the file dialog. Omit to use the only upload control on the page (file inputs are often hidden and absent from the snapshot).",
-        },
-        name: { type: "string", description: "Human-readable label for the log" },
+        file: { type: "string", description: "Name of an attached file, as listed." },
+        ref: ref("File input or upload button"),
+        name: label,
       },
       required: ["file"],
     },
   },
   {
     name: "switch_tab",
-    description:
-      "Switch to another open browser tab. When an action opens a new tab you are moved to it automatically; use this to go back (or forward). The list of open tabs with their numbers is shown in action results whenever more than one tab is open.",
-    input_schema: {
-      type: "object",
-      properties: {
-        index: { type: "number", description: "Tab number from the list, starting at 1." },
-      },
-      required: ["index"],
-    },
+    description: "Switch to another open tab by its number from the Tabs line. You are moved to a newly opened tab automatically.",
+    input_schema: { type: "object", properties: { index: { type: "number" } }, required: ["index"] },
   },
   {
     name: "handle_dialog",
     description:
-      "Decide what happens to the NEXT native browser dialog (alert / confirm / prompt). By default every dialog is accepted (OK) and its text is reported to you. Call this BEFORE the action that opens the dialog when the test case says to press Cancel, or to type a value into a prompt.",
+      "Set what happens to the NEXT native dialog (alert/confirm/prompt). Dialogs are accepted by default; call this BEFORE the action that opens one to press Cancel or to type into a prompt.",
     input_schema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["accept", "dismiss"], description: "accept = OK, dismiss = Cancel." },
-        text: { type: "string", description: "Text to type into a prompt() dialog before accepting." },
+        action: { type: "string", enum: ["accept", "dismiss"] },
+        text: { type: "string", description: "Text to type into a prompt()." },
       },
       required: ["action"],
     },
   },
   {
+    name: "note",
+    description:
+      "Save a fact you will need later: a value to compare, an id, a state before a change. Notes stay in your context for the whole run; old page trees do not.",
+    input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+  },
+  {
     name: "mock_request",
     description:
-      "Intercept network requests matching a URL and control the response, the way a tester does with Charles or DevTools. Call it BEFORE the action that triggers the request. Modes: (1) status and/or body — answer with a made-up response without hitting the server; invent realistic body data in the shape the page expects when the test case gives none; (2) patch — let the real request through and merge fields into the real JSON response (the most reliable way to change one field); (3) abort — fail the request with a network error. delay_ms slows the request down and can be combined with any mode or used alone. Mocks stay active until clear_mocks.",
+      "Intercept requests whose URL matches and control the response. Call BEFORE the action that sends the request. status/body = answer without hitting the server; patch = merge fields into the REAL JSON response; abort = network error; delay_ms = slow it down. Stays active until clear_mocks.",
     input_schema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "Part of the request URL ('/api/cart'), or a glob with * ('*/orders/*').",
-        },
-        method: { type: "string", description: "Only this HTTP method (GET, POST, …). Omit for any." },
-        status: { type: "number", description: "HTTP status to answer with, e.g. 500. Defaults to 200 when body is given." },
-        body: { type: "string", description: "Response body to answer with — usually a JSON string." },
-        content_type: { type: "string", description: "Content-Type of body. Defaults to application/json for JSON, else text/plain." },
-        patch: {
-          type: "object",
-          description: "JSON merged into the REAL response: objects merge recursively, lists and values are replaced. If the response is a list, the patch is applied to every item.",
-        },
-        abort: { type: "boolean", description: "true = the request fails with a network error." },
-        delay_ms: { type: "number", description: "Delay before the response, in ms (max 30000)." },
+        url: { type: "string", description: "Part of the URL ('/api/cart') or a glob with * ('*/orders/*')." },
+        method: { type: "string" },
+        status: { type: "number" },
+        body: { type: "string", description: "Response body, usually a JSON string." },
+        content_type: { type: "string" },
+        patch: { type: "object", description: "Merged into the real response; applied to every item if it is a list." },
+        abort: { type: "boolean" },
+        delay_ms: { type: "number" },
       },
       required: ["url"],
     },
   },
   {
     name: "clear_mocks",
-    description: "Remove all mocks installed with mock_request; requests go to the real server again. Also reports how many requests each mock matched.",
+    description: "Remove all mocks; reports how many requests each one matched.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "set_offline",
-    description: "Turn the browser's network off or back on, to check how the page behaves without a connection.",
-    input_schema: {
-      type: "object",
-      properties: { offline: { type: "boolean" } },
-      required: ["offline"],
-    },
+    description: "Turn the browser's network off (true) or back on (false).",
+    input_schema: { type: "object", properties: { offline: { type: "boolean" } }, required: ["offline"] },
   },
   {
     name: "get_requests",
     description:
-      "List recent network requests the page made (XHR/fetch calls and page loads) — the Network tab: method, URL, status, request body and JSON response body. Use it to verify that a request was sent with the right data, or that the server answered with the expected status. Secrets are masked.",
+      "The Network tab: recent XHR/fetch calls and page loads with method, URL, status, request body and JSON response. `find` matches the URL or the request body, so an RPC method name works too.",
     input_schema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "Only requests whose URL contains this text (or matches this glob)." },
-        method: { type: "string", description: "Only this HTTP method." },
-        failed_only: { type: "boolean", description: "Only requests that failed or returned 4xx/5xx." },
-        limit: { type: "number", description: "How many of the latest matches to return (default 15)." },
+        find: { type: "string", description: "Text in the URL or request body, e.g. 'orders' or 'getNotifications'." },
+        method: { type: "string" },
+        failed_only: { type: "boolean", description: "Only failed or 4xx/5xx." },
+        limit: { type: "number", description: "Latest N matches, default 15." },
       },
     },
   },
   {
     name: "get_console",
-    description: "JavaScript errors from the browser console for the whole run (console.error and uncaught exceptions).",
+    description: "JavaScript console errors of the whole run.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "ask_user",
     description:
-      "Ask the user for ONE specific value needed right now (OTP/SMS code, captcha, phone number for login). Use ONLY when the value is not in the test case and the agent cannot know it. prompt must describe exactly the field currently on screen (by its label/placeholder from the snapshot).",
+      "Ask the user for ONE value the test case does not give and you cannot know: a login, phone, OTP, captcha. Name the field on screen.",
     input_schema: {
       type: "object",
       properties: {
-        prompt: {
-          type: "string",
-          description: "What to enter, by field label. Example: 'Enter phone number', 'Enter SMS code'.",
-        },
-        secret: {
-          type: "boolean",
-          description: "true only for secret values: password, OTP/SMS code, CVV. false for phone, email, username.",
-        },
+        prompt: { type: "string", description: "What to enter, e.g. 'Enter the SMS code'." },
+        secret: { type: "boolean", description: "true for passwords and codes." },
       },
       required: ["prompt"],
     },
@@ -312,36 +253,38 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "report_step",
     description:
-      "Record the result of one test case step. Call AFTER executing and checking the expected result. Screenshot for fail/warn is taken automatically.",
+      "Record the verdict of one step, AFTER you have seen the result of its actions. Screenshot for fail/warn is automatic.",
     input_schema: {
       type: "object",
       properties: {
-        num: {
-          type: "number",
-          description: "Sequential step number from the plan (across all groups, as returned by set_plan).",
-        },
-        description: { type: "string", description: "Brief description of what was checked." },
-        status: { type: "string", enum: ["pass", "fail", "warn"] },
-        expected: {
-          type: "string",
-          description: "Expected result of this step, copied from the test case. Omit if the test case states none.",
-        },
+        // Order matters: the model writes the fields in this order, so it states
+        // what it saw BEFORE it commits to a verdict. With status first it picked
+        // the verdict and then wrote evidence to fit it.
+        num: { type: "number", description: "Step number from the plan." },
+        expected: { type: "string", description: "Expected result of the step, copied from the test case." },
         evidence: {
           type: "string",
-          description: "Actual result — what was observed: verbatim text quote from the page, request status, dialog text.",
+          description:
+            "What you actually saw, one or two sentences: a verbatim quote from the page, a request and its status, a dialog text. For a 'changed / did not change' check give the value before and after for every element checked.",
         },
+        status: {
+          type: "string",
+          enum: ["pass", "fail", "warn"],
+          description: "Decided from the evidence you just wrote: pass only if it shows the expected result.",
+        },
+        description: { type: "string", description: "Only if the step went differently from the plan: one line saying what was done." },
       },
-      required: ["num", "description", "status"],
+      required: ["num", "evidence", "status"],
     },
   },
   {
     name: "finish",
-    description: "End the run after all steps are complete.",
+    description: "End the run after the last step is reported.",
     input_schema: {
       type: "object",
       properties: {
         status: { type: "string", enum: ["passed", "failed"] },
-        summary: { type: "string", description: "1-3 sentences about the results, written in the same language as the test case." },
+        summary: { type: "string", description: "1–2 sentences, in the language of the test case." },
       },
       required: ["status", "summary"],
     },
