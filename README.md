@@ -120,9 +120,7 @@ a **Stop** button. Finished runs land under **Recent runs**.
 ## Models
 
 Open **Settings** (top right of the home page) to pick the provider, paste the API
-key and choose the model. For Anthropic the model list is loaded live from the API,
-so it always shows every model your key can use. Changes apply to the next run — no
-restart. On first launch qpilot opens Settings by itself.
+key and type the model id. Changes apply to the next run — no restart. On first launch qpilot opens Settings by itself.
 
 `npx qpilot config` opens the same page directly.
 

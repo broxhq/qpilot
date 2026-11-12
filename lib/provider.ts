@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { readConfigFile, type StoredConfig } from "./config";
 
 // Model provider. Two backends:
@@ -276,58 +276,4 @@ export async function callOpenAICompatible(
   }
 
   return fromOpenAI(await res.json());
-}
-
-// ── model list (Settings page) ───────────────────────────────────────────────
-
-export interface ModelOption {
-  id: string;
-  name: string;
-  /** ISO date the model was released (Anthropic only). */
-  created?: string;
-}
-
-/**
- * Every model the key can use, straight from the provider — never a built-in
- * list, so new models show up the day they ship. Anthropic: GET /v1/models
- * (newest first, all pages). OpenAI-compatible: GET <baseURL>/models.
- */
-export async function listModels(cfg: StoredConfig): Promise<ModelOption[]> {
-  if (cfg.provider === "anthropic") {
-    const client = new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL || undefined, maxRetries: 1 });
-    const out: ModelOption[] = [];
-    try {
-      for await (const m of client.models.list({ limit: 1000 })) {
-        out.push({ id: m.id, name: m.display_name || m.id, created: m.created_at });
-      }
-    } catch (err) {
-      throw new Error(modelListError(err));
-    }
-    return out;
-  }
-
-  const url = (cfg.baseURL || "").replace(/\/+$/, "") + "/models";
-  let res: Response;
-  try {
-    res = await fetch(url, { headers: { Authorization: `Bearer ${cfg.apiKey}` } });
-  } catch (err) {
-    const cause = (err as { cause?: { code?: string; message?: string } }).cause;
-    throw new Error(`Cannot reach ${url} (${cause?.code ?? cause?.message ?? (err as Error).message})`);
-  }
-  if (!res.ok) {
-    throw new Error(modelListError({ status: res.status, message: (await res.text().catch(() => "")).slice(0, 200) }));
-  }
-  const data = (await res.json().catch(() => ({}))) as { data?: Array<{ id?: unknown }> };
-  return (data.data ?? [])
-    .map((m) => (typeof m.id === "string" ? m.id : ""))
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b))
-    .map((id) => ({ id, name: id }));
-}
-
-function modelListError(err: unknown): string {
-  const e = err as { status?: number; message?: string };
-  if (e.status === 401 || e.status === 403) return "The API key was rejected — check that it is correct and active.";
-  if (e.status === 404) return "This endpoint has no model list (404). Enter the model id by hand.";
-  return e.message || String(err);
 }

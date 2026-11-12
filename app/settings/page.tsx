@@ -1,16 +1,14 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Check, CircleAlert, Cpu, Loader2, Palette, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, CircleAlert, Cpu, Loader2, Palette, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ModelSelect } from "@/components/settings/model-select";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { dict, type Lang } from "@/lib/i18n";
-import type { ModelOption } from "@/lib/provider";
 
 type Provider = "anthropic" | "custom";
 
@@ -56,11 +54,6 @@ function SettingsForm() {
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
 
-  const [models, setModels] = useState<ModelOption[] | null>(null);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-  const modelsReq = useRef(0);
-
   useEffect(() => {
     if (navigator.language?.toLowerCase().startsWith("ru")) setLang("ru");
     fetch("/api/settings").then(r => r.json()).then((s: Settings) => {
@@ -68,7 +61,6 @@ function SettingsForm() {
       setProvider(s.provider);
       setBaseURL(s.baseURL);
       setModel(s.model);
-      loadModels(s.provider, "", s.baseURL, s);
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -76,45 +68,12 @@ function SettingsForm() {
   // for — the server enforces the same rule (lib/config.ts reusableKey)
   const savedKeyFits = (p: Provider, url: string, s = saved) =>
     Boolean(s?.hasKey && s.provider === p && normUrl(s.baseURL) === normUrl(url));
-  const keyUsable = (p: Provider, typed: string, url = baseURL, s = saved) =>
-    Boolean(typed.trim() || savedKeyFits(p, url, s));
-
-  async function loadModels(p = provider, key = apiKey, url = baseURL, s = saved) {
-    const req = ++modelsReq.current;
-    setModelsError(null);
-    if (!keyUsable(p, key, url, s) || (p === "custom" && !url.trim())) {
-      setModels(null);
-      return;
-    }
-    setModelsLoading(true);
-    try {
-      const res = await fetch("/api/settings/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: p, apiKey: key, baseURL: url }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (req !== modelsReq.current) return;
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      setModels(json.models);
-    } catch (err) {
-      if (req !== modelsReq.current) return;
-      setModels(null);
-      setModelsError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (req === modelsReq.current) setModelsLoading(false);
-    }
-  }
-
   function switchProvider(p: Provider) {
     if (p === provider) return;
     setProvider(p);
     setApiKey("");
     setModel(p === saved?.provider ? saved.model : "");
-    const url = p === saved?.provider ? saved.baseURL : "";
-    setBaseURL(url);
-    setModels(null);
-    loadModels(p, "", url);
+    setBaseURL(p === saved?.provider ? saved.baseURL : "");
   }
 
   async function save(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -147,7 +106,6 @@ function SettingsForm() {
     : savedKeyFits(provider, baseURL)
       ? (saved.source === "env" ? t.keyFromEnv : t.keySaved).replace("{hint}", saved.keyHint)
       : t.keyRebind;
-  const effectiveModel = model || (provider === "anthropic" ? saved?.defaultModel ?? "" : "");
 
   return (
     <main className="mx-auto max-w-xl px-6 pt-10 pb-24">
@@ -194,7 +152,7 @@ function SettingsForm() {
           {provider === "custom" && (
             <Field label={t.baseUrl} hint={t.baseUrlHintCustom}>
               <Input value={baseURL} onChange={e => setBaseURL(e.target.value)}
-                onBlur={() => loadModels()} placeholder="https://…/v1"
+                placeholder="https://…/v1"
                 spellCheck={false} autoComplete="off" className="font-mono text-[13px]" />
             </Field>
           )}
@@ -202,47 +160,24 @@ function SettingsForm() {
           {/* key */}
           <Field label={provider === "anthropic" ? t.apiKey : t.apiToken} hint={keyNote ?? undefined}>
             <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-              onBlur={() => { if (apiKey.trim()) loadModels(); }}
               placeholder={savedKeyFits(provider, baseURL) ? "••••••••" : provider === "anthropic" ? "sk-ant-…" : ""}
               spellCheck={false} autoComplete="off" autoFocus={welcome}
               className="font-mono text-[13px]" />
           </Field>
 
-          {/* model */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className={LABEL}>{t.modelLabel}</span>
-              <button type="button" onClick={() => loadModels()}
-                disabled={modelsLoading || !keyUsable(provider, apiKey)}
-                className="inline-flex items-center gap-1 text-xs text-subtle hover:text-foreground disabled:opacity-50 disabled:pointer-events-none transition-colors">
-                <RefreshCw className={cn("size-3", modelsLoading && "animate-spin")} />{t.refreshModels}
-              </button>
-            </div>
-            <ModelSelect
-              t={t}
-              value={effectiveModel}
-              models={models}
-              loading={modelsLoading}
-              defaultModel={provider === "anthropic" ? saved?.defaultModel : undefined}
-              onChange={setModel}
-            />
-            {modelsError ? (
-              <div className="flex items-start gap-1.5 text-xs leading-relaxed text-destructive">
-                <CircleAlert className="size-3.5 shrink-0 mt-px" />
-                <span className="break-words min-w-0">{modelsError}</span>
-              </div>
-            ) : (
-              <div className={HINT}>
-                {!keyUsable(provider, apiKey) ? t.modelsNeedKey
-                  : provider === "anthropic" ? t.modelHintAnthropic : t.modelHintCustom}
-              </div>
-            )}
-          </div>
+          {/* model: typed by hand — a provider's own list mixes in models that cannot drive the agent */}
+          <Field label={t.modelLabel}
+            hint={provider === "anthropic"
+              ? t.modelHintAnthropic.replace("{model}", saved?.defaultModel ?? "")
+              : t.modelHintCustom}>
+            <Input value={model} onChange={e => setModel(e.target.value)}
+              placeholder={provider === "anthropic" ? saved?.defaultModel ?? "" : "model-id"}
+              spellCheck={false} autoComplete="off" className="font-mono text-[13px]" />
+          </Field>
 
           {provider === "anthropic" && (
             <Field label={t.baseUrl} optional={t.optional} hint={t.baseUrlHintAnthropic}>
               <Input value={baseURL} onChange={e => setBaseURL(e.target.value)}
-                onBlur={() => loadModels()}
                 placeholder="https://api.anthropic.com"
                 spellCheck={false} autoComplete="off" className="font-mono text-[13px]" />
             </Field>

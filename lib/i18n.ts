@@ -111,14 +111,6 @@ export interface Dict {
     modelLabel: string;
     modelHintAnthropic: string;
     modelHintCustom: string;
-    modelsLoading: string;
-    modelsNeedKey: string;
-    refreshModels: string;
-    modelSearch: string;
-    noModels: string;
-    useTyped: string;
-    chooseModel: string;
-    defaultTag: string;
     baseUrl: string;
     baseUrlHintAnthropic: string;
     baseUrlHintCustom: string;
@@ -280,16 +272,8 @@ const en: Dict = {
     keyFromEnv: "Using {hint} from the environment — leave empty to keep it",
     keyRebind: "Re-enter the key for this address — the saved key is only sent to the base URL it was saved with",
     modelLabel: "Model",
-    modelHintAnthropic: "Loaded live from Anthropic: every model your key can use.",
-    modelHintCustom: "Loaded from the endpoint's /models list. The model must support tool calling.",
-    modelsLoading: "Loading models…",
-    modelsNeedKey: "Enter the API key to load the models",
-    refreshModels: "Reload the list",
-    modelSearch: "Find a model or type its id…",
-    noModels: "No matching models",
-    useTyped: "Use “{id}”",
-    chooseModel: "Choose a model",
-    defaultTag: "default",
+    modelHintAnthropic: "Model id. Leave empty for the default: {model}.",
+    modelHintCustom: "Model id exactly as the endpoint names it. The model must support tool calling.",
     baseUrl: "Base URL",
     baseUrlHintAnthropic: "Only to reach Claude through a corporate proxy. Leave empty for api.anthropic.com.",
     baseUrlHintCustom: "The endpoint's OpenAI-compatible root, usually ending in /v1.",
@@ -451,16 +435,8 @@ const ru: Dict = {
     keyFromEnv: "Используется {hint} из переменных окружения — оставьте пустым, чтобы не менять",
     keyRebind: "Введите ключ заново для этого адреса — сохранённый ключ отправляется только на тот Base URL, с которым его сохранили",
     modelLabel: "Модель",
-    modelHintAnthropic: "Список загружается из Anthropic: все модели, доступные вашему ключу.",
-    modelHintCustom: "Список берётся из /models на сервере. Модель должна поддерживать tool calling.",
-    modelsLoading: "Загружаю модели…",
-    modelsNeedKey: "Введите API-ключ, чтобы загрузить модели",
-    refreshModels: "Обновить список",
-    modelSearch: "Найти модель или ввести её ID…",
-    noModels: "Подходящих моделей нет",
-    useTyped: "Использовать «{id}»",
-    chooseModel: "Выберите модель",
-    defaultTag: "по умолчанию",
+    modelHintAnthropic: "Идентификатор модели. Оставьте пустым для модели по умолчанию: {model}.",
+    modelHintCustom: "Идентификатор модели, как он назван на сервере. Модель должна поддерживать tool calling.",
     baseUrl: "Base URL",
     baseUrlHintAnthropic: "Только для доступа к Claude через корпоративный прокси. Оставьте пустым для api.anthropic.com.",
     baseUrlHintCustom: "Корень OpenAI-совместимого API, обычно заканчивается на /v1.",
