@@ -1,9 +1,9 @@
 // Acting on the page and reading it back: element lookup, tabs, dialogs, the
 // result every page action returns.
 
-import { type Browser, type Locator, type Page } from "playwright";
+import { type Locator, type Page } from "playwright";
 import { pushEvent } from "../store";
-import { snapshot } from "../tools";
+import { snapshot } from "./snapshot";
 import { type RunEvent } from "../types";
 import { REF_RE, type ToolContext, type ToolResult } from "./context";
 

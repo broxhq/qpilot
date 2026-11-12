@@ -36,18 +36,6 @@ export interface ToolResult {
   finished?: boolean;
 }
 
-/** One tool: what the model sent, the run's state, and what goes back to the model. */
-export type Handlers = Record<
-  string,
-  (input: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult>
->;
-
 // Playwright prefixes refs of elements inside a (same-origin) iframe with the
 // iframe's frame sequence, e.g. "f1e2" — plain "e12" is only the main frame.
 export const REF_RE = /^(?:f\d+)?e\d+$/;
-
-// Tools that act on the page and return its tree through actionResult.
-export const PAGE_ACTIONS = new Set([
-  "navigate", "click", "fill", "select", "hover", "press", "scroll", "scroll_to",
-  "dismiss", "wait", "wait_for", "upload_file", "switch_tab",
-]);

@@ -76,7 +76,6 @@ export interface Dict {
   home: {
     tagline: string;
     chooseFolder: string;
-    uploadMd: string;
     files: string;
     clearList: string;
     selectAll: string;
@@ -89,8 +88,6 @@ export interface Dict {
     stop: string;
     example: string;
     placeholder: string;
-    expand: string;
-    collapse: string;
     batchRun: string;
     recentRuns: string;
     attach: string;
@@ -242,7 +239,6 @@ const en: Dict = {
   home: {
     tagline: "Paste a test case. Watch it run.",
     chooseFolder: "Choose folder",
-    uploadMd: "Upload .md",
     files: "files",
     clearList: "Clear file list",
     selectAll: "Select all",
@@ -255,8 +251,6 @@ const en: Dict = {
     stop: "Stop",
     example: "Example",
     placeholder: "Paste your test case here…",
-    expand: "Expand",
-    collapse: "Collapse",
     batchRun: "Batch run",
     recentRuns: "Recent runs",
     attach: "Attach files",
@@ -416,7 +410,6 @@ const ru: Dict = {
   home: {
     tagline: "Вставьте тест-кейс. Смотрите, как он проходит.",
     chooseFolder: "Выбрать папку",
-    uploadMd: "Загрузить .md",
     files: "файлов",
     clearList: "Очистить список",
     selectAll: "Выбрать все",
@@ -429,8 +422,6 @@ const ru: Dict = {
     stop: "Остановить",
     example: "Пример",
     placeholder: "Вставьте сюда свой тест-кейс…",
-    expand: "Развернуть",
-    collapse: "Свернуть",
     batchRun: "Пакетный прогон",
     recentRuns: "Последние прогоны",
     attach: "Прикрепить файлы",

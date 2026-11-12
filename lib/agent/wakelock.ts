@@ -1,7 +1,6 @@
 // Keeping the machine awake while a run is in progress.
 
 import { spawn } from "node:child_process";
-import { sleep } from "./model";
 
 export function spawnWakeLock() {
   try {

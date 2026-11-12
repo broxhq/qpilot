@@ -1,7 +1,7 @@
 // Talking to the model: one call with retries, and keeping the history within budget.
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { TOOLS, snapshot } from "../tools";
+import { TOOLS } from "./handlers";
 import { callOpenAICompatible, parseRetryAfter, type ProviderConfig } from "../provider";
 import { SYSTEM } from "./prompt";
 

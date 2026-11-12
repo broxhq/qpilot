@@ -1,7 +1,5 @@
 // What the model is told. Every line is sent with every model call.
 
-import { snapshot } from "../tools";
-import { note } from "./page";
 
 // Every line here is sent with every model call and the model is the slow part
 // of a run, so the prompt is kept to rules that change behaviour. Tool-specific

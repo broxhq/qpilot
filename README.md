@@ -20,8 +20,8 @@
 npx qpilot
 ```
 
-That's the whole install. First launch walks you through picking a model, then opens
-the UI in your browser.
+That's the whole install. It opens the UI in your browser; on first launch that is
+the Settings page, where you pick a model.
 
 **Needs:** Node.js 20.12+, Google Chrome, and an [Anthropic API key](https://console.anthropic.com)
 — or any OpenAI-compatible endpoint (Qwen, vLLM, Ollama, a corporate gateway).
@@ -124,11 +124,7 @@ key and choose the model. For Anthropic the model list is loaded live from the A
 so it always shows every model your key can use. Changes apply to the next run — no
 restart. On first launch qpilot opens Settings by itself.
 
-From a terminal the same settings are available with:
-
-```bash
-npx qpilot config
-```
+`npx qpilot config` opens the same page directly.
 
 - **Anthropic (Claude)** — paste your `sk-ant-…` key. Defaults to `claude-haiku-4-5`.
   A base URL is optional, for reaching Claude through a corporate proxy.
@@ -147,8 +143,7 @@ provider you can skip setup entirely with an `ANTHROPIC_API_KEY` env var or a
 
 ## Good to know
 
-- Light and dark themes: follows your system by default, or pick one with the
-  switch next to **Settings**.
+- Light and dark themes: follows your system by default, or pick one in **Settings**.
 - Everything runs locally. Nothing leaves your machine except the model calls, so
   qpilot works against staging and internal networks.
 - The local API only answers qpilot's own pages: requests from other websites

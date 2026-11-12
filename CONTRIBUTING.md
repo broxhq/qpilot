@@ -80,7 +80,8 @@ lib/agent/prompt.ts       what the model is told
 lib/agent/handlers/       one handler per tool: plan and verdicts, page actions, network
 lib/agent/page.ts         acting on the page and reading it back: tabs, dialogs, results
 lib/network.ts            request mocks, the request log, console errors
-lib/tools.ts              tool schemas and the page snapshot
+lib/agent/snapshot.ts     the page tree the model reads
+lib/home-state.ts         state of the home page: draft, folder, attachments, batch
 lib/provider.ts           Anthropic and OpenAI-compatible model calls
 lib/store.ts              in-memory run state
 lib/types.ts              shared types
@@ -103,7 +104,7 @@ The run page follows along over Server-Sent Events.
   message format. The OpenAI-compatible path converts it in `lib/provider.ts`, so the
   agent loop never needs to know which provider it talks to. Test both if you change
   messages or tool schemas.
-- **Step statuses live in three places.** The `report_step` enum in `lib/tools.ts`, the
+- **Step statuses live in three places.** The `report_step` enum in `lib/agent/handlers/plan.ts`, the
   system prompt in `lib/agent/prompt.ts`, and `StepStatus` in `lib/types.ts` (plus the colours
   on the run page). Change one, change all.
 - **UI strings go into both dictionaries.** Add a key to `Dict` and to both `en` and `ru`
@@ -116,11 +117,15 @@ The run page follows along over Server-Sent Events.
 
 ## Adding a tool for the agent
 
-1. Add its schema to `TOOLS` in `lib/tools.ts` (`name`, `description`, `input_schema`).
-2. Add its handler to the matching file in `lib/agent/handlers/`. Actions that change the page should
-   return a fresh snapshot, as the existing ones do.
-3. Tell the model when to use it in `SYSTEM`, if the description alone isn't enough.
-4. If it should appear readably in the run log, render it on the run page.
+1. Add an entry to the matching file in `lib/agent/handlers/`: the `schema` the model
+   sees and the `run` function, side by side. An action that changes the page sets
+   `page: true` and returns `actionResult(...)`, as the existing ones do.
+2. Add its name to `ORDER` in `lib/agent/handlers/index.ts` — the order the model
+   reads the tools in. The server refuses to start if you forget.
+3. Tell the model when to use it in `SYSTEM` (`lib/agent/prompt.ts`), if the
+   description alone isn't enough.
+4. Give it a label for the run log in `describeAction` (`components/run/log.tsx`),
+   with the text in both dictionaries.
 
 ## Code style
 
