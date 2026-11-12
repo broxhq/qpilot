@@ -1,19 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useRef, useState, useEffect } from "react";
 import Link from "next/link";
-import {
-  Bot, FileText, ArrowRight, Upload, Folder, X,
-  Check, CircleAlert, Clock, Loader2, Square, CheckSquare,
-  ChevronDown, ChevronUp, Eye, Paperclip, Settings as SettingsIcon,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { cn, formatDuration } from "@/lib/utils";
-import type { RunStatus } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronDown, ChevronUp, CircleAlert, Loader2, X, Bot, FileText, ArrowRight, Upload, Folder, Square, CheckSquare, Eye, Settings as SettingsIcon } from "lucide-react";
+import { type RunStatus } from "@/lib/types";
 import { updateFavicon, resetFavicon } from "@/lib/favicon";
 import { dict, type Lang } from "@/lib/i18n";
+import { cn, formatDuration } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { AttachmentsPanel } from "@/components/home/attachments-panel";
+import { BatchStatusIcon, RunStatusIcon } from "@/components/home/status-icons";
 
 type RunSummary = { id: string; createdAt: number; status: RunStatus; title: string };
 type MdFile = { name: string; file: File };
@@ -631,84 +629,6 @@ export default function Home() {
       )}
     </main>
   );
-}
-
-/**
- * Files the agent can hand to a file input during the run (photos, CSVs,
- * documents). They apply to both the single run and every run in a batch.
- */
-function AttachmentsPanel({
-  files,
-  onPick,
-  onRemove,
-  t,
-}: {
-  files: File[];
-  onPick: () => void;
-  onRemove: (name: string) => void;
-  t: ReturnType<typeof dict>["home"];
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <Button type="button" variant="ghost" size="sm"
-        onClick={onPick}
-        className="gap-2 text-muted-foreground hover:text-foreground">
-        <Paperclip className="size-3.5" />
-        {files.length ? t.addFile : t.attach}
-      </Button>
-
-      {files.length === 0 ? (
-        <span className="text-[11px] text-subtle">
-          {t.attachHint}
-        </span>
-      ) : (
-        files.map(f => (
-          <span key={f.name}
-            className="group inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface pl-2.5 pr-1 py-1">
-            <span className="text-[11px] font-mono text-foreground/75 max-w-[180px] truncate">
-              {f.name}
-            </span>
-            <span className="text-[10px] tabular-nums text-subtle">
-              {formatSize(f.size)}
-            </span>
-            <button type="button" onClick={() => onRemove(f.name)}
-              title={`${t.remove} ${f.name}`}
-              className="rounded p-0.5 text-subtle hover:text-destructive transition-colors">
-              <X className="size-3" />
-            </button>
-          </span>
-        ))
-      )}
-    </div>
-  );
-}
-
-function BatchStatusIcon({ status }: { status: "queued" | "skipped" | RunStatus }) {
-  if (status === "running")
-    return <Loader2 className="size-3.5 shrink-0 text-subtle animate-spin" />;
-  if (status === "passed")
-    return <Check className="size-3.5 shrink-0 text-success" strokeWidth={2.5} />;
-  if (status === "failed" || status === "error")
-    return <CircleAlert className="size-3.5 shrink-0 text-destructive" />;
-  if (status === "paused")
-    return <span className="size-3.5 shrink-0 text-[10px] text-subtle font-mono">▐▐</span>;
-  if (status === "skipped")
-    return <span className="size-3.5 shrink-0 text-[10px] text-faint font-mono">—</span>;
-  return <span className="size-3.5 shrink-0 rounded-sm border border-border-strong inline-block" />;
-}
-
-function RunStatusIcon({ status }: { status: RunStatus }) {
-  if (status === "passed")
-    return <Check className="size-3.5 shrink-0 text-success" strokeWidth={2.5} />;
-  if (status === "failed" || status === "error")
-    return <CircleAlert className="size-3.5 shrink-0 text-destructive" />;
-  return <Clock className="size-3.5 shrink-0 text-subtle" />;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatTime(ts: number): string {

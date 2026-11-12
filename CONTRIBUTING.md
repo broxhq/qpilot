@@ -75,7 +75,11 @@ Mention in the PR which test cases you ran and against which model.
 app/page.tsx              home page: test case input, folders, batch runs, history
 app/run/[id]/page.tsx     live run page: steps, log, questions from the agent
 app/api/                  run, stream (SSE), answer, pause, screenshot endpoints
-lib/agent.ts              the agent loop, system prompt, tool execution
+lib/agent/index.ts        the agent loop
+lib/agent/prompt.ts       what the model is told
+lib/agent/handlers/       one handler per tool: plan and verdicts, page actions, network
+lib/agent/page.ts         acting on the page and reading it back: tabs, dialogs, results
+lib/network.ts            request mocks, the request log, console errors
 lib/tools.ts              tool schemas and the page snapshot
 lib/provider.ts           Anthropic and OpenAI-compatible model calls
 lib/store.ts              in-memory run state
@@ -100,11 +104,11 @@ The run page follows along over Server-Sent Events.
   agent loop never needs to know which provider it talks to. Test both if you change
   messages or tool schemas.
 - **Step statuses live in three places.** The `report_step` enum in `lib/tools.ts`, the
-  system prompt in `lib/agent.ts`, and `StepStatus` in `lib/types.ts` (plus the colours
+  system prompt in `lib/agent/prompt.ts`, and `StepStatus` in `lib/types.ts` (plus the colours
   on the run page). Change one, change all.
 - **UI strings go into both dictionaries.** Add a key to `Dict` and to both `en` and `ru`
   in `lib/i18n.ts`; the build fails otherwise, on purpose.
-- **Prompt changes are behaviour changes.** Small edits to `SYSTEM` in `lib/agent.ts`
+- **Prompt changes are behaviour changes.** Small edits to `SYSTEM` in `lib/agent/prompt.ts`
   can shift how the agent acts on many sites. Say in the PR what you changed and why,
   and what you ran to check it.
 - **State is in memory.** Runs disappear on restart and on hot reload during
@@ -113,7 +117,7 @@ The run page follows along over Server-Sent Events.
 ## Adding a tool for the agent
 
 1. Add its schema to `TOOLS` in `lib/tools.ts` (`name`, `description`, `input_schema`).
-2. Handle it in `executeTool` in `lib/agent.ts`. Actions that change the page should
+2. Add its handler to the matching file in `lib/agent/handlers/`. Actions that change the page should
    return a fresh snapshot, as the existing ones do.
 3. Tell the model when to use it in `SYSTEM`, if the description alone isn't enough.
 4. If it should appear readably in the run log, render it on the run page.

@@ -1,4 +1,5 @@
 import type { Dict } from "./i18n";
+import { groupSteps } from "./steps";
 import type { Run, StepResult } from "./types";
 import { formatDuration } from "./utils";
 
@@ -13,16 +14,6 @@ const MARK: Record<string, string> = {
   skipped: "⏭",
   queued: "⏳",
 };
-
-function grouped(steps: StepResult[]): { title?: string; steps: StepResult[] }[] {
-  const groups: { title?: string; steps: StepResult[] }[] = [];
-  for (const s of steps) {
-    const last = groups[groups.length - 1];
-    if (last && last.title === s.group) last.steps.push(s);
-    else groups.push({ title: s.group, steps: [s] });
-  }
-  return groups;
-}
 
 function counts(run: Run, t: Dict): string {
   const n = (status: string) => run.steps.filter((s) => s.status === status).length;
@@ -41,7 +32,7 @@ export function reportMarkdown(run: Run, elapsedMs: number, t: Dict): string {
     `**${t.reportResult}:** ${statusLabel(run, t).toUpperCase()} — ${counts(run, t)}`,
     `**${t.reportDuration}:** ${formatDuration(elapsedMs)} · ${new Date(run.createdAt).toLocaleString()}`,
   ];
-  for (const g of grouped(run.steps)) {
+  for (const g of groupSteps(run.steps)) {
     out.push("");
     if (g.title) out.push(`## ${g.title}`, "");
     g.steps.forEach((s, i) => {
@@ -109,7 +100,7 @@ export function reportHtml(
 </li>`;
   };
 
-  const groupsHtml = grouped(run.steps)
+  const groupsHtml = groupSteps(run.steps)
     .map(
       (g) =>
         `${g.title ? `<h2>${esc(g.title)}</h2>` : ""}<ol>${g.steps
