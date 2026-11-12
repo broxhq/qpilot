@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# a newer push to the same branch or PR makes the older run pointless
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # the oldest Node the package supports, and the current LTS
+        node: ["20.12", "22"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # type check and production build — the project's correctness gate
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      # the built server starts, serves its pages and keeps the API closed to other sites
+      - name: Smoke test
+        run: |
+          PORT=3900 HOSTNAME=127.0.0.1 node .next/standalone/server.js &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3900/api/runs > /dev/null && break
+            sleep 1
+          done
+          status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(status http://127.0.0.1:3900/)" = 200
+          test "$(status http://127.0.0.1:3900/settings)" = 200
+          test "$(status http://127.0.0.1:3900/api/runs)" = 200
+          test "$(status -H 'Origin: https://evil.example' http://127.0.0.1:3900/api/runs)" = 403
+          test "$(status -H 'Host: evil.example' http://127.0.0.1:3900/api/runs)" = 403
+
+      # what `npm publish` would ship: the CLI and the built server must be in it
+      - name: Package contents
+        run: |
+          npm pack --dry-run --ignore-scripts --json > pack.json
+          node -e '
+            const files = require("./pack.json")[0].files.map((f) => f.path);
+            for (const need of ["bin/qa-agent.js", ".next/standalone/server.js"]) {
+              if (!files.includes(need)) { console.error("missing from the package:", need); process.exit(1); }
+            }
+            console.log(files.length, "files in the package");
+          '

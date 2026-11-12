@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/qpilot"><img src="https://img.shields.io/npm/v/qpilot" alt="npm"></a>
+  <a href="https://github.com/broxhq/qpilot/actions/workflows/ci.yml"><img src="https://github.com/broxhq/qpilot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20.12-brightgreen" alt="node">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <a href="https://github.com/broxhq/qpilot"><img src="https://img.shields.io/github/stars/broxhq/qpilot?style=social" alt="stars"></a>

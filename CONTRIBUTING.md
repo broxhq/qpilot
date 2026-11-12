@@ -61,7 +61,8 @@ node bin/qa-agent.js
 
 ## Checking your change
 
-There is no test suite or linter yet. Before opening a PR:
+There is no test suite or linter yet. CI builds every push and pull request on Node 20.12
+and 22, starts the built server and checks that it answers. Before opening a PR:
 
 1. `npm run build` passes — it runs the TypeScript check.
 2. You ran at least one real test case that exercises your change, in the browser.
