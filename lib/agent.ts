@@ -81,7 +81,10 @@ SCOPE — do exactly what the step says and nothing else
 ELEMENTS
 - click/fill/select/hover need a ref from the MOST RECENT page tree; older refs are stale. Refs inside an iframe look like f1e2 — use them as shown.
 - The tree is the WHOLE page, not just the visible part: scrolling never adds elements. To find a control in a named block, or when the tree is truncated, use snapshot(near="block title"). Scroll only for lazy-loaded content.
-- <select> → select. Something that opens on hover (bell, avatar menu, tooltip, submenu) → hover, then act inside the opened panel; an icon-only trigger has no name — look for an unnamed button, link or image in the header.
+- <select> → select. Something that opens on hover (bell, avatar menu, tooltip, submenu) → hover, not click. An icon-only control has no name: the tree shows it as "(no name; class=…, icon=…, data-testid=…)" — pick the one whose hints fit (bell, notif…), never just the first unnamed button.
+- After hover or click, check that it worked: the result must list the opened panel under "Changes". "NONE" means nothing opened — you hit the wrong element; try the next candidate. Do not report a step about a panel you did not see open.
+- A panel opened by hover stays open only while the pointer is on it. Until you are done with it, act only inside it: click, hover and scroll with refs taken from inside the panel. dismiss, or an action on an element outside it, closes it.
+- Lists that load more on scroll: scroll(ref of an item INSIDE the list, y) and repeat until the result says "bottom reached" — the next page is requested only near the bottom, and the list then grows. One scroll that did not reach the bottom proves nothing.
 - "intercepts pointer events" means an overlay covers the target: dismiss, then retry.
 - The page still shows the old state, a loader or a spinner → wait_for(a text the new state must show, timeout_s up to 60). It is a failure only after wait_for times out.
 - A new tab: you are moved to it automatically; switch_tab(index) goes back. Native dialogs are accepted (OK) automatically and their text is at the top of the result; to press Cancel or type into a prompt call handle_dialog BEFORE the action.
@@ -92,7 +95,7 @@ FILES
 NETWORK — only when the test case asks to mock, break, slow down or inspect requests
 - mock_request BEFORE the action that sends the request. Body: the one from the test case; otherwise let the real request happen once, read it with get_requests and reuse its field names — that is preparation, not the step: afterwards set the mock, repeat the step's action and judge the step by the mocked page. To change a few fields use patch. Invent a body only when the real request cannot be made. Read what mock_request returns: it names missing or wrong fields — fix them.
 - Mocks persist: clear_mocks when the test case no longer needs them. set_offline(true) → check → set_offline(false).
-- "The request was sent / with this body / returned this status" → get_requests(find=endpoint or method name). Quote method, URL and status as evidence. A mock that matched 0 requests has a wrong URL — fix it, do not report pass.
+- "The request was sent / with this body / returned this status" → get_requests(find=endpoint or method name). Each request says after which of your actions it was sent: only requests sent after the step's own action count. The same request sent earlier (after navigate, by another widget on the page) proves nothing about the step. Quote method, URL, status and "sent after" as evidence. A mock that matched 0 requests has a wrong URL — fix it, do not report pass.
 
 ask_user — only for a value the test case does not give and you cannot know (login, phone, OTP, captcha). secret=true for passwords and codes. One value per question.`;
 
@@ -356,6 +359,42 @@ async function clickWithHint(action: () => Promise<void>): Promise<void> {
   }
 }
 
+/**
+ * Runs IN THE BROWSER. A point inside the visible part of the nearest scrollable
+ * ancestor of the element — where a person would rest the pointer to scroll that
+ * block. The element itself may be scrolled out of view, so its own position is
+ * no use. null when the block is the page itself.
+ */
+function pointInScrollBlock(el: Element): { x: number; y: number } | null {
+  let n: Element | null = el;
+  while (n && n !== document.body && n !== document.documentElement) {
+    const st = getComputedStyle(n);
+    const scrollsY = /(auto|scroll|overlay)/.test(st.overflowY) && n.scrollHeight > n.clientHeight + 1;
+    const scrollsX = /(auto|scroll|overlay)/.test(st.overflowX) && n.scrollWidth > n.clientWidth + 1;
+    if (scrollsY || scrollsX) {
+      const r = n.getBoundingClientRect();
+      const left = Math.max(r.left, 0);
+      const top = Math.max(r.top, 0);
+      const right = Math.min(r.right, window.innerWidth);
+      const bottom = Math.min(r.bottom, window.innerHeight);
+      if (right - left < 4 || bottom - top < 4) return null;
+      return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
+    }
+    n = n.parentElement;
+  }
+  return null;
+}
+
+/** Turn the mouse wheel in small steps, like a hand on a touchpad, so scroll handlers see a real scroll. */
+async function wheel(page: Page, dx: number, dy: number): Promise<void> {
+  const steps = Math.min(40, Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 120)));
+  for (let i = 0; i < steps; i++) {
+    await page.mouse.wheel(dx / steps, dy / steps);
+    await page.waitForTimeout(50);
+  }
+  await page.waitForTimeout(250); // smooth scrolling and scroll handlers
+}
+
 async function captureEvidence(page: Page): Promise<Buffer | undefined> {
   try {
     return await page.screenshot({ type: "jpeg", quality: 55 });
@@ -462,7 +501,10 @@ function describeScroll(r: ScrollResult, reqX: number, reqY: number): string {
         : "No movement — already at the edge in that direction.",
     );
   }
-  parts.push("Take a snapshot to see new content.");
+  if (r.kind === "container" && r.posY < r.maxY - 2 && reqY > 0) {
+    parts.push("Not at the bottom yet — a list that loads more on scroll does so only near its bottom.");
+  }
+  parts.push("Scrolling does not change the page tree by itself; it changes only if new content was loaded.");
   return parts.join(" ");
 }
 
@@ -592,8 +634,14 @@ async function executeTool(
     case "hover": {
       const loc = await locate(page, input);
       await loc.hover({ timeout: 5000 });
+      // some hover handlers wait for the pointer to move again or to rest ("hover
+      // intent"): one more small move inside the element, then stay still
+      const hb = await loc.boundingBox().catch(() => null);
+      if (hb) {
+        await page.mouse.move(hb.x + hb.width / 2 + 1, hb.y + hb.height / 2 + 1).catch(() => {});
+      }
       // panels that open on hover usually do so after a short delay or animation
-      await page.waitForTimeout(450).catch(() => {});
+      await page.waitForTimeout(600).catch(() => {});
       return actionResult(ctx, `OK: hovered ${input.name ?? input.ref}`);
     }
 
@@ -635,8 +683,22 @@ async function executeTool(
         if ((await loc.count()) === 0) {
           return { content: `ref ${ref} not found — take a fresh snapshot` };
         }
-        // Find the nearest scrollable ancestor of the ref'd element and scroll it.
-        res = await loc.evaluate(scrollNearest, { x, y });
+        // Scroll the way a person does: pointer over the block, then the wheel.
+        // A programmatic scrollBy leaves the pointer where it was, so a panel
+        // that is open only while hovered closes under the agent, and lists
+        // that react to the wheel never load their next page.
+        const before = await loc.evaluate(scrollNearest, { x: 0, y: 0 });
+        const spot = await loc.evaluate(pointInScrollBlock);
+        if (spot) {
+          await page.mouse.move(spot.x, spot.y);
+          await wheel(page, x, y);
+        }
+        const after = await loc.evaluate(scrollNearest, { x: 0, y: 0 }).catch(() => before);
+        res = { ...after, movedX: after.posX - before.posX, movedY: after.posY - before.posY };
+        if (res.movedX === 0 && res.movedY === 0 && (x !== 0 || y !== 0)) {
+          // the wheel moved nothing (something else was under the pointer): scroll the block directly
+          res = await loc.evaluate(scrollNearest, { x, y });
+        }
       } else {
         res = await page.evaluate(scrollNearest, { x, y });
       }
@@ -1193,7 +1255,11 @@ export async function runAgent(
           });
           continue;
         }
-        if (PAGE_ACTIONS.has(name)) actedThisTurn = true;
+        if (PAGE_ACTIONS.has(name)) {
+          actedThisTurn = true;
+          const what = input.name ?? input.url ?? input.text ?? input.key ?? "";
+          ctx.net.mark(`${name}${what ? ` "${String(what).slice(0, 60)}"` : ""}`);
+        }
 
         sigsSinceProgress.push(actionSig(name, input));
 

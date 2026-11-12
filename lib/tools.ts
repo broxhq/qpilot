@@ -141,7 +141,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "scroll",
     description:
-      "Scroll by pixels. Without ref — the window; with ref of any element inside a scrollable block — that block. Returns position and limits. Only for lazy-loaded content: scrolling never adds elements to the page tree.",
+      "Scroll by pixels. Without ref — the window. With ref of any element inside a scrollable block — moves the mouse over that element and turns the wheel, so the block scrolls like under a person's hand and a hover-opened panel stays open. Returns position and limits ('bottom reached'). Only for lazy-loaded content: scrolling never adds existing elements to the page tree.",
     input_schema: {
       type: "object",
       properties: {
@@ -291,6 +291,70 @@ export const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
+const MAX_HINTED = 40;
+
+/**
+ * Icon-only controls have no accessible name: the tree shows a bare `button
+ * [ref=e12]`, and a header with five of them gives the model nothing to tell
+ * the bell from the help icon. Add what the markup does say — test ids, class
+ * names, the icon's file or sprite id, a link target.
+ */
+async function hintUnnamed(page: Page, tree: string): Promise<string> {
+  const bare = /^\s*- (?:button|link|img|menuitem|tab) \[ref=((?:f\d+)?e\d+)\]/;
+  const refs = tree
+    .split("\n")
+    .map((l) => l.match(bare)?.[1])
+    .filter((r): r is string => !!r)
+    .slice(0, MAX_HINTED);
+  if (refs.length === 0) return tree;
+
+  const hints = await Promise.all(
+    refs.map((ref) =>
+      page
+        .locator(`aria-ref=${ref}`)
+        .evaluate(
+          (el) => {
+            const out: string[] = [];
+            const add = (k: string, v: string | null | undefined) => {
+              const t = (v ?? "").trim().slice(0, 60);
+              if (t && out.length < 4 && !out.some((o) => o.endsWith(`=${t}`))) out.push(`${k}=${t}`);
+            };
+            const words = (c: string | null) =>
+              (c ?? "").split(/\s+/).filter((w) => /[a-zA-Z]{4,}/.test(w)).slice(0, 3).join(" ");
+            for (const a of ["data-testid", "data-test-id", "data-test", "data-qa", "data-name", "id", "name", "title"]) {
+              add(a, el.getAttribute(a));
+            }
+            add("class", words(el.getAttribute("class")));
+            const use = el.querySelector("use");
+            add("icon", use?.getAttribute("href") ?? use?.getAttribute("xlink:href"));
+            add("icon", el.querySelector("svg title")?.textContent);
+            const img = el.tagName === "IMG" ? el : el.querySelector("img");
+            if (img) {
+              add("alt", img.getAttribute("alt"));
+              add("img", (img.getAttribute("src") ?? "").split("/").pop()?.split("?")[0]);
+            }
+            const inner = el.querySelector("[data-testid], [class]");
+            if (inner) add("inside", inner.getAttribute("data-testid") ?? words(inner.getAttribute("class")));
+            if (el.tagName === "A") add("href", el.getAttribute("href"));
+            return out.join(", ");
+          },
+          undefined,
+          { timeout: 800 },
+        )
+        .catch(() => ""),
+    ),
+  );
+  const byRef = new Map(refs.map((r, i) => [r, hints[i]]));
+  return tree
+    .split("\n")
+    .map((line) => {
+      const ref = line.match(bare)?.[1];
+      const hint = ref ? byRef.get(ref) : "";
+      return hint ? line.replace(`[ref=${ref}]`, `[ref=${ref}] (no name; ${hint})`) : line;
+    })
+    .join("\n");
+}
+
 const MAX_SNAPSHOT_CHARS = 16000;
 
 export async function snapshot(page: Page, near?: string): Promise<string> {
@@ -353,6 +417,7 @@ export async function snapshot(page: Page, near?: string): Promise<string> {
         .catch(() => {});
     }
   }
+  tree = await hintUnnamed(page, tree);
   if (tree.length > MAX_SNAPSHOT_CHARS) {
     tree =
       tree.slice(0, MAX_SNAPSHOT_CHARS) +

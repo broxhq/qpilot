@@ -48,6 +48,8 @@ interface LogEntry {
   mocked?: boolean;
   reqBody?: string;
   resBody?: string;
+  /** The agent's page action that preceded the request — what tells cause from coincidence. */
+  after: string;
   /** Field paths of the real JSON response ("[].name", "user.id") — the shape a mock must match. */
   shape?: string[];
   isList?: boolean;
@@ -160,6 +162,7 @@ export class NetworkMonitor {
   private consoleErrors: string[] = [];
   private consoleRead = 0;
   private unverifiedHits = 0;
+  private marker = "(nothing yet — before the first action)";
   /** Requests sent and not yet answered, with the time they started. */
   private inflight = new Map<Request, number>();
   private context: BrowserContext;
@@ -220,6 +223,11 @@ export class NetworkMonitor {
     }
   }
 
+  /** Called before every page action: requests from now on are listed as sent after it. */
+  mark(action: string): void {
+    this.marker = action;
+  }
+
   /** Console errors are per page — call for every page (tab) of the run. */
   wirePage(page: Page): void {
     const push = (text: string) => {
@@ -243,6 +251,7 @@ export class NetworkMonitor {
       url: maskUrl(req.url()),
       type,
       reqBody: maskBody(req.postData()),
+      after: this.marker,
     };
     this.inflight.set(req, Date.now());
     this.byRequest.set(req, entry);
@@ -435,13 +444,13 @@ export class NetworkMonitor {
           ? String(e.status)
           : "pending";
       const head = `#${e.n} ${e.method} ${e.url} → ${outcome}${e.mocked ? " [mocked]" : ""}`;
-      const parts = [head];
+      const parts = [head, `  sent after: ${e.after}`];
       if (e.reqBody) parts.push(`  request body: ${e.reqBody}`);
       if (e.resBody) parts.push(`  response body: ${e.resBody}`);
       return parts.join("\n");
     });
     const more = hits.length > shown.length ? `\n(${hits.length - shown.length} earlier matches not shown — narrow the filter)` : "";
-    return `${hits.length} matching request(s), oldest first:\n${lines.join("\n")}${more}`;
+    return `${hits.length} matching request(s), oldest first. "sent after" is your action that preceded the request — a request sent after navigate, or before the step's own action, was not caused by that action:\n${lines.join("\n")}${more}`;
   }
 
   /** Errors logged since the previous call — for the per-step note in the report. */
