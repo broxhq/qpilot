@@ -62,7 +62,7 @@ function SettingsForm() {
       setBaseURL(s.baseURL);
       setModel(s.model);
     }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // the saved key counts only for the provider and base URL it was saved
   // for — the server enforces the same rule (lib/config.ts reusableKey)

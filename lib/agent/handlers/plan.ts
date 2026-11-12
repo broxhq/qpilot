@@ -89,7 +89,7 @@ export const planTools: ToolDef[] = [
         "Save a fact you will need later: a value to compare, an id, a state before a change. Notes stay in your context for the whole run; old page trees do not.",
       input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
     },
-    run: async (input, ctx) => {
+    run: async (input) => {
       const text = String(input.text ?? "").trim();
       return { content: text ? "OK: noted — it stays in your context." : "Error: text is required." };
     },

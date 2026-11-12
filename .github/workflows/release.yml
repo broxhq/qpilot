@@ -1,0 +1,59 @@
+name: Release
+
+# Publishes to npm when a version tag is pushed:
+#
+#   npm version patch        # or minor / major — commits and tags
+#   git push --follow-tags
+#
+# Off until the repository variable PUBLISH_FROM_CI is "true". Before turning it
+# on, add this workflow as a Trusted Publisher of the package on npmjs.com
+# (package → Settings → Trusted Publisher → GitHub Actions: broxhq / qpilot /
+# release.yml). npm then accepts the publish from this workflow alone: no token is
+# stored anywhere, and the package gets a provenance statement.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # the GitHub release
+  id-token: write # npm trusted publishing
+
+jobs:
+  publish:
+    if: vars.PUBLISH_FROM_CI == 'true'
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # trusted publishing needs a recent npm
+      - run: npm install -g npm@latest
+
+      - name: Tag matches package.json
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          test "$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package.json says $version"; exit 1; }
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+      - name: End-to-end run
+        run: |
+          google-chrome --version || npx playwright install chrome
+          npm run e2e
+
+      - run: npm publish --access public
+
+      - name: GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

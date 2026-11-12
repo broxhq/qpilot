@@ -61,14 +61,22 @@ node bin/qa-agent.js
 
 ## Checking your change
 
-There is no test suite or linter yet. CI builds every push and pull request on Node 20.12
-and 22, starts the built server and checks that it answers. Before opening a PR:
+```bash
+npm run lint     # ESLint, no warnings allowed
+npm run build    # type check and production build
+npm run e2e      # one whole run in a real Chrome against a scripted model
+```
 
-1. `npm run build` passes — it runs the TypeScript check.
-2. You ran at least one real test case that exercises your change, in the browser.
-   For agent changes, also run a case that worked before, to catch regressions.
+`npm run e2e` needs the build and Google Chrome. It does not call a real model: a
+scripted one answers with fixed tool calls, so the result is the same every time. It
+checks that tools act on the page, verdicts land on the right steps and secrets stay out
+of the report — not how well a real model reads a page.
 
-Mention in the PR which test cases you ran and against which model.
+CI runs the same three on every push and pull request, on Node 20.12 and 22.
+
+For a change to the agent's behaviour (the prompt, a tool, what a result says) that is
+not enough: run at least one real test case with a real model, and one that worked
+before. Say in the PR which test cases you ran and against which model.
 
 ## How the code is organised
 
