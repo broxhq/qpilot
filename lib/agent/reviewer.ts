@@ -124,16 +124,18 @@ export class Reviewer {
 
   private async ask(ctx: ToolContext, num: number, question: string, shot: Buffer | undefined): Promise<void> {
     const { runId } = ctx;
-    const res = await askText(this.cfg, this.client, SYSTEM, question, REVIEW_TIMEOUT_MS);
-    // the call runs beside the agent's own, so its time is not added to modelMs —
-    // that would count the same seconds twice
-    addStats(runId, { calls: 1, inputTokens: res.inputTokens, outputTokens: res.outputTokens });
-
-    // QPILOT_REVIEW_LOG=<file>: every question and answer, to audit the reviewer itself
-    const log = process.env.QPILOT_REVIEW_LOG;
-    if (log) await appendFile(log, JSON.stringify({ runId, num, question, answer: res.text }) + "\n").catch(() => {});
-
-    const opinion = parseVerdict(res.text);
+    // The gateway now and then returns an empty answer; one more try, then no opinion.
+    let opinion: ReturnType<typeof parseVerdict> = null;
+    for (let attempt = 0; attempt < 2 && !opinion; attempt++) {
+      const res = await askText(this.cfg, this.client, SYSTEM, question, REVIEW_TIMEOUT_MS);
+      // the call runs beside the agent's own, so its time is not added to modelMs —
+      // that would count the same seconds twice
+      addStats(runId, { calls: 1, inputTokens: res.inputTokens, outputTokens: res.outputTokens });
+      // QPILOT_REVIEW_LOG=<file>: every question and answer, to audit the reviewer itself
+      const log = process.env.QPILOT_REVIEW_LOG;
+      if (log) await appendFile(log, JSON.stringify({ runId, num, question, answer: res.text }) + "\n").catch(() => {});
+      opinion = parseVerdict(res.text);
+    }
     if (opinion?.verdict !== "contradicted") return;
     const current = getRun(runId)?.steps.find((s) => s.num === num);
     if (!current || current.status !== "pass") return;

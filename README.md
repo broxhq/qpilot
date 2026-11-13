@@ -115,6 +115,11 @@ model or the report sees them.
 
 ## The report
 
+Every step the agent passes is checked a second time: the same model, with a clean
+context, is given the step, the agent's evidence and what the browser actually
+returned. If it finds the evidence contradicted, the step becomes a `warn` with the
+reason and a screenshot — for you to decide.
+
 A failed step shows **Expected** next to **Actual**, with a screenshot. When the run
 ends you can **Copy report** (Markdown, for a ticket), **Download report** (one HTML
 file with screenshots inside), **Run again**, or **Edit test case** and rerun.

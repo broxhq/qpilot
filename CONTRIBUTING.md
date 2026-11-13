@@ -91,6 +91,7 @@ lib/agent/page.ts         acting on the page and reading it back: tabs, dialogs,
 lib/network.ts            request mocks, the request log, console errors
 lib/agent/snapshot.ts     the page tree the model reads
 lib/agent/vision.ts       checks whether the model can see images
+lib/agent/reviewer.ts     a second opinion on every pass
 lib/home-state.ts         state of the home page: draft, folder, attachments, batch
 lib/provider.ts           Anthropic and OpenAI-compatible model calls
 lib/store.ts              in-memory run state
@@ -115,6 +116,13 @@ The run page follows along over Server-Sent Events.
   `click_at`, `hover_at`) and the `EYES` block of the prompt. For any other model the
   request must stay exactly what it was — `npm run e2e` checks both cases. Do not add
   a setting for it. `QPILOT_VISION=0|1` overrides the check for debugging.
+- **A pass is reviewed, a fail is not.** `Reviewer` (`lib/agent/reviewer.ts`) asks the
+  model again about every pass, in a separate call with only the step, the claim and
+  the tool results of that step. It can only object: pass → warn. It must never pass
+  or fail a step, and never block the agent — it runs in the background and the run
+  waits for it only before closing. If you change its prompt, run it against real
+  passes first (`QPILOT_REVIEW_LOG=<file>` records its questions and answers): a
+  reviewer that objects to correct passes makes every report noisy.
 - **Two providers, one history format.** Conversation history is always in Anthropic's
   message format. The OpenAI-compatible path converts it in `lib/provider.ts`, so the
   agent loop never needs to know which provider it talks to. Test both if you change
