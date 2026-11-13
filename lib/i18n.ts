@@ -40,6 +40,7 @@ export interface Dict {
   actual: string;
   consoleErrors: string;
   mockUnverified: string;
+  reviewerObjects: string;
   infoNewTab: string;
   infoTabClosed: string;
   infoDialog: string;
@@ -193,6 +194,7 @@ const en: Dict = {
   expected: "Expected",
   actual: "Actual",
   consoleErrors: "Console errors during this step",
+  reviewerObjects: "The agent passed this step, a second check disagrees",
   mockUnverified: "The mocked response was made up without a real one to compare with — its structure may not match what the page expects.",
   infoNewTab: "A new tab opened",
   infoTabClosed: "The tab was closed, back to",
@@ -361,6 +363,7 @@ const ru: Dict = {
   expected: "Ожидалось",
   actual: "Фактически",
   consoleErrors: "Ошибки в консоли на этом шаге",
+  reviewerObjects: "Агент засчитал шаг, повторная проверка не согласна",
   mockUnverified: "Подменённый ответ придуман без сверки с настоящим — его структура может не совпадать с тем, что ждёт страница.",
   infoNewTab: "Открылась новая вкладка",
   infoTabClosed: "Вкладка закрыта, возврат на",

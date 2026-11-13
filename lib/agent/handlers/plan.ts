@@ -182,6 +182,8 @@ export const planTools: ToolDef[] = [
           screenshot = `/api/run/${runId}/shot/${num}`;
         }
       }
+      // a pass gets a second opinion; if it objects, the step needs the page as it was now
+      const passShot = status === "pass" && ctx.reviewer.on ? await captureEvidence(page) : undefined;
       const clean = (v: unknown) => redact(ctx, stripRefs(String(v))).trim();
       // console errors since the previous step: a note for the reader, not a verdict —
       // third-party scripts make most consoles noisy, so they never change the status
@@ -203,6 +205,18 @@ export const planTools: ToolDef[] = [
         mockUnverified: ctx.net.takeUnverifiedMockHits() > 0 || undefined,
       };
       pushEvent(runId, { ts: Date.now(), kind: "step", step, stepNum: num });
+      // the reviewer reads the model's own words, not the masked copy shown in the UI
+      ctx.reviewer.review(
+        ctx,
+        {
+          num,
+          description: planned?.description ?? step.description,
+          expected: input.expected ? stripRefs(String(input.expected)) : undefined,
+          evidence: input.evidence ? stripRefs(String(input.evidence)) : undefined,
+          status,
+        },
+        passShot,
+      );
       // the next step to work on is the first one still queued, not blindly num + 1
       const upcoming = plan.find((s) => s.num !== num && s.status === "queued");
       ctx.step.current = upcoming?.num ?? num + 1;
@@ -228,6 +242,8 @@ export const planTools: ToolDef[] = [
     run: async (input, ctx) => {
       const { runId } = ctx;
       const status = (input.status as string) === "passed" ? "passed" : "failed";
+      // second opinions still on their way can change a step — wait before closing the run
+      await ctx.reviewer.settle();
       pushEvent(runId, {
         ts: Date.now(),
         kind: "done",

@@ -107,6 +107,12 @@ export function StepCard({
           )
         )}
 
+        {step.reviewer && (
+          <p className="px-4 pb-3 -mt-1 text-[11.5px] leading-relaxed text-warning">
+            ⚠ {t.reviewerObjects}: <span className="font-mono">{step.reviewer}</span>
+          </p>
+        )}
+
         {step.mockUnverified && (
           <p className="px-4 pb-3 -mt-1 text-[11px] leading-relaxed text-warning/90">⚠ {t.mockUnverified}</p>
         )}

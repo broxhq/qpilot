@@ -359,3 +359,53 @@ export async function askAboutImage(
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
   return json.choices?.[0]?.message?.content ?? "";
 }
+
+/** One plain question, one plain answer — no tools, no history. */
+export async function askText(
+  cfg: ProviderConfig,
+  client: Anthropic | null,
+  system: string,
+  question: string,
+  timeoutMs: number,
+): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+  // room for models that reason before they answer
+  const maxTokens = 600;
+
+  if (cfg.kind === "anthropic") {
+    const res = await client!.messages.create(
+      { model: cfg.model, max_tokens: maxTokens, system, messages: [{ role: "user", content: question }] },
+      { timeout: timeoutMs, maxRetries: 0 },
+    );
+    return {
+      text: res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join(""),
+      inputTokens: res.usage?.input_tokens ?? 0,
+      outputTokens: res.usage?.output_tokens ?? 0,
+    };
+  }
+
+  const res = await fetch(cfg.baseURL.replace(/\/+$/, "") + "/chat/completions", {
+    method: "POST",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify({
+      model: cfg.model,
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: question },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(`Model API ${res.status}`), { status: res.status });
+  }
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string | null } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  return {
+    text: json.choices?.[0]?.message?.content ?? "",
+    inputTokens: json.usage?.prompt_tokens ?? 0,
+    outputTokens: json.usage?.completion_tokens ?? 0,
+  };
+}

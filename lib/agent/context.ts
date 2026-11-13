@@ -3,6 +3,7 @@
 import { type BrowserContext, type Page } from "playwright";
 import { type StoredFile } from "../attachments";
 import { NetworkMonitor } from "../network";
+import { type Reviewer } from "./reviewer";
 
 export type ReportStatus = "pass" | "fail" | "warn";
 
@@ -12,6 +13,8 @@ export interface ToolContext {
   page: Page;
   context: BrowserContext;
   net: NetworkMonitor;
+  /** Gives a second opinion on every pass — see reviewer.ts. */
+  reviewer: Reviewer;
   step: { current: number };
   files: StoredFile[];
   /** The model can be shown screenshots. Turned off mid-run if the endpoint refuses one. */

@@ -25,11 +25,13 @@ export function ref(tree, pattern) {
 /**
  * Starts the model on a free port. `requests` keeps every request body, so a
  * test can look at what the agent sent; `visionChecks` keeps the "can you see?"
- * questions separately.
+ * questions and `reviews` the second-opinion questions separately. `review(body)`
+ * may return the reviewer's answer; by default every pass is confirmed.
  */
-export function startModel(script) {
+export function startModel(script, { review } = {}) {
   const requests = [];
   const visionChecks = [];
+  const reviews = [];
   let turn = 0;
   const server = http.createServer((req, res) => {
     let raw = "";
@@ -38,11 +40,17 @@ export function startModel(script) {
       res.writeHead(200, { "content-type": "application/json" });
       if (req.method !== "POST") return res.end('{"data":[{"id":"scripted"}]}');
       const body = JSON.parse(raw);
-      // a request without tools is the agent asking "can you see this picture?" —
-      // a scripted model cannot, and says so
+      // a request without tools is not a turn of the run. With a picture it is the
+      // agent asking "can you see this?" — a scripted model cannot, and says so.
+      // Without one it is a pass handed over for a second opinion.
       if (!body.tools) {
-        visionChecks.push(body);
-        return res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "I cannot see images." } }] }));
+        const answer = (content) => res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content } }] }));
+        if (body.messages.some((m) => Array.isArray(m.content))) {
+          visionChecks.push(body);
+          return answer("I cannot see images.");
+        }
+        reviews.push(body);
+        return answer(review?.(body) ?? '{"verdict":"confirmed","reason":"The records show it."}');
       }
       requests.push(body);
       const results = body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -62,6 +70,6 @@ export function startModel(script) {
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>
-      resolve({ url: `http://127.0.0.1:${server.address().port}/v1`, requests, visionChecks, close: () => server.close() })),
+      resolve({ url: `http://127.0.0.1:${server.address().port}/v1`, requests, visionChecks, reviews, close: () => server.close() })),
   );
 }

@@ -13,6 +13,7 @@ import { callModel, compactHistory, dropScreenshots } from "./model";
 import { wirePage, withNotices } from "./page";
 import { NUDGE } from "./prompt";
 import { isSecretField, redact, redactDeep, stripRefs } from "./redact";
+import { Reviewer } from "./reviewer";
 import { canSee, forgetVision } from "./vision";
 import { spawnWakeLock } from "./wakelock";
 
@@ -76,6 +77,7 @@ export async function runAgent(
       page,
       context,
       net: new NetworkMonitor(context),
+      reviewer: new Reviewer(cfg, client, testCase),
       step: { current: 1 },
       files,
       vision: await canSee(cfg, client, browser),
@@ -194,6 +196,7 @@ export async function runAgent(
 
         emptyTurns++;
         if (emptyTurns >= MAX_EMPTY_TURNS) {
+          await ctx.reviewer.settle();
           pushEvent(runId, {
             ts: Date.now(),
             kind: "done",
@@ -282,6 +285,7 @@ export async function runAgent(
           const ret = await executeTool(name, input, ctx);
           if (toolStarted) addStats(runId, { browserMs: Date.now() - toolStarted });
           const text = withNotices(ctx, ret.content);
+          ctx.reviewer.record(name, input, text);
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
@@ -302,6 +306,7 @@ export async function runAgent(
           if (name === "navigate" || name === "ask_user") progressedThisTurn = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          ctx.reviewer.record(name, input, `Error: ${message}`);
           // after a failed action the model needs to see the page: give it the
           // tree now instead of making it spend a turn on snapshot
           const tree =
@@ -337,6 +342,7 @@ export async function runAgent(
         sigsSinceProgress.length >= STUCK_WINDOW &&
         new Set(sigsSinceProgress).size <= STUCK_DISTINCT
       ) {
+        await ctx.reviewer.settle();
         pushEvent(runId, {
           ts: Date.now(),
           kind: "done",
@@ -347,6 +353,7 @@ export async function runAgent(
       }
     }
 
+    await ctx.reviewer.settle();
     // Loop exited by exhausting iterations (not via finish) — close the run
     // explicitly, else status stays running and logs hang in pending though the
     // browser is gone.

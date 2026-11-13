@@ -41,6 +41,7 @@ export function reportMarkdown(run: Run, elapsedMs: number, t: Dict): string {
       const failed = s.status === "fail" || s.status === "warn";
       if (failed && s.expected) out.push(`   - ${t.expected}: ${s.expected}`);
       if (s.evidence) out.push(failed ? `   - ${t.actual}: ${s.evidence}` : `   - ${s.evidence}`);
+      if (s.reviewer) out.push(`   - ⚠ ${t.reviewerObjects}: ${s.reviewer}`);
       if (s.mockUnverified) out.push(`   - ⚠ ${t.mockUnverified}`);
       if (s.consoleErrors?.length) {
         out.push(`   - ${t.consoleErrors}: ${s.consoleErrors.join(" | ")}`);
@@ -83,6 +84,7 @@ export function reportHtml(
     const passNote =
       (!failed && s.evidence ? `<p class="ev">${esc(s.evidence)}</p>` : "") +
       (s.mockUnverified ? `<p class="ev" style="color:${COLOR.warn}">⚠ ${esc(t.mockUnverified)}</p>` : "");
+    if (s.reviewer) rows.push(`<dt>⚠</dt><dd style="color:${COLOR.warn}">${esc(t.reviewerObjects)}: ${esc(s.reviewer)}</dd>`);
     if (s.consoleErrors?.length) {
       rows.push(
         `<dt>${esc(t.consoleErrors)}</dt><dd>${s.consoleErrors.map(esc).join("<br>")}</dd>`,

@@ -4,8 +4,9 @@
 //   npm run build && npm run e2e
 //
 // It answers one question: does a run still go the way it should — tools act on
-// the page, verdicts land on the right steps, secrets stay out of the report, and
-// a model that cannot see is given the text-only agent?
+// the page, verdicts land on the right steps, secrets stay out of the report, a
+// model that cannot see is given the text-only agent, and a pass the second
+// opinion objects to ends up as a warn?
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -74,10 +75,11 @@ async function follow(base, id) {
 
 /**
  * One run of the app against a scripted model: its own server, its own settings
- * directory. `env` is added to the server's environment.
+ * directory. `env` is added to the server's environment, `review` answers the
+ * second-opinion questions (see model.mjs).
  */
-async function runWith(script, testCase, env = {}) {
-  const model = await startModel(script);
+async function runWith(script, testCase, env = {}, review) {
+  const model = await startModel(script, { review });
   const home = mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", baseURL: model.url, apiKey: "e2e-key-0000000000", model: "scripted" }));
   const port = await freePort();
@@ -176,6 +178,14 @@ try {
     assert.ok(shots[2].bytes > 1000, "the screenshot is a real image");
     assert.equal(run.steps[0].screenshot, undefined);
 
+    // every pass got a second opinion, the fail did not; a confirmed pass stays as it was
+    assert.deepEqual(
+      model.reviews.map((r) => r.messages[1].content.match(/Step under review: (\d+)/)?.[1]),
+      ["1", "3"],
+      "passes are reviewed, fails are not",
+    );
+    assert.equal(run.steps[0].reviewer, undefined);
+
     // what was typed into the password field never reaches events or the report
     const shown = JSON.stringify({ run, events });
     assert.ok(!shown.includes(PASSWORD), "the password is masked everywhere a person can read it");
@@ -213,6 +223,46 @@ try {
     assert.doesNotMatch(model.requests[0].messages[0].content, /EYES|click_at/, "…and nothing about looking in the prompt");
     assert.notEqual(run.vision, true);
     console.log("✓ a model that cannot see is given the text-only tools and prompt");
+  }
+
+  // ── 3. the second opinion objects to a pass ──────────────────────────────────
+  {
+    const { run, model, shots } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the form — the form is shown", "Save — Saved is shown"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url })],
+        (tree, call) => [
+          call("report_step", { num: 1, expected: "the form is shown", evidence: "heading Banner form", status: "pass" }),
+          call("click", { ref: ref(tree, /button "Save"/), name: "Save" }),
+        ],
+        (_tree, call) => [
+          call("report_step", { num: 2, expected: "Saved is shown", evidence: "status: Saved", status: "pass" }),
+          call("finish", { status: "passed", summary: "All good." }),
+        ],
+      ],
+      `Form\nURL: ${site.url}\n1. Open the form.\n2. Save.`,
+      { QPILOT_VISION: "0" },
+      (body) =>
+        body.messages[1].content.includes("Step under review: 2)")
+          ? 'Here is my answer:\n```json\n{"verdict":"contradicted","reason":"The page tree shows no Saved [ref=e9]."}\n```'
+          : '{"verdict":"cannot_tell","reason":"Not enough."}',
+    );
+
+    assert.deepEqual(run.steps.map((s) => s.status), ["pass", "warn"], "an objection turns the pass into a warn, doubt does not");
+    assert.equal(run.steps[1].reviewer, "The page tree shows no Saved.", "the reason is on the step, without refs");
+    assert.equal(run.steps[1].evidence, "status: Saved", "the agent's own evidence stays");
+    assert.equal(shots[2]?.type, "image/jpeg", "the disputed step gets the screenshot taken when it was reported");
+    assert.equal(run.status, "passed", "a warn does not fail the run");
+
+    // what the reviewer was given: the step, the claim, the tool results and the page — no refs, no tools
+    const question = model.reviews[1].messages[1].content;
+    assert.match(question, /Agent's evidence: status: Saved/);
+    assert.match(question, /click \{.*"name":"Save"\}\n→ OK: clicked Save/, "the tool results of the step are in the records");
+    assert.doesNotMatch(question.split("Records")[1].split("The page tree as")[0], /Page snapshot/, "…without a page tree per action");
+    assert.match(question, /status: Saved/, "the page as the agent last saw it");
+    assert.doesNotMatch(question, /\[ref=e\d/);
+    assert.equal(model.reviews[1].tools, undefined);
+    console.log("✓ a pass the second opinion objects to becomes a warn with the reason");
   }
 } catch (err) {
   failed = true;

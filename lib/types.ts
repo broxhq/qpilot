@@ -14,6 +14,8 @@ export interface StepResult {
   consoleErrors?: string[];
   /** A mock with a guessed response shape answered a request on this step. */
   mockUnverified?: boolean;
+  /** The agent said pass, the second opinion objected (see lib/agent/reviewer.ts): why. The status is then warn. */
+  reviewer?: string;
   group?: string;
 }
 
