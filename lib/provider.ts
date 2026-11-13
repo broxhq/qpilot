@@ -123,8 +123,10 @@ interface OpenAIToolCall {
   function: { name: string; arguments: string };
 }
 
+type OpenAIImagePart = { type: "image_url"; image_url: { url: string } };
 type OpenAIMessage =
-  | { role: "system" | "user" | "assistant"; content: string | null; tool_calls?: OpenAIToolCall[] }
+  | { role: "system" | "assistant"; content: string | null; tool_calls?: OpenAIToolCall[] }
+  | { role: "user"; content: string | Array<{ type: "text"; text: string } | OpenAIImagePart> }
   | { role: "tool"; tool_call_id: string; content: string };
 
 function toOpenAITools(tools: Anthropic.Tool[]) {
@@ -152,14 +154,35 @@ function toOpenAIMessages(
 
     if (m.role === "user") {
       // block(s): tool_result and/or text
+      // A tool message can only be text here, so a screenshot returned by a tool
+      // follows as a user message once the turn's tool results are in.
+      const images: OpenAIImagePart[] = [];
       for (const b of m.content) {
         if (b.type === "tool_result") {
-          const c =
-            typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
-          out.push({ role: "tool", tool_call_id: b.tool_use_id, content: c });
+          let text: string;
+          if (typeof b.content === "string") text = b.content;
+          else {
+            const parts = b.content ?? [];
+            text = parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n");
+            for (const p of parts) {
+              if (p.type === "image" && p.source.type === "base64") {
+                images.push({
+                  type: "image_url",
+                  image_url: { url: `data:${p.source.media_type};base64,${p.source.data}` },
+                });
+              }
+            }
+          }
+          out.push({ role: "tool", tool_call_id: b.tool_use_id, content: text });
         } else if (b.type === "text") {
           out.push({ role: "user", content: b.text });
         }
+      }
+      if (images.length) {
+        out.push({
+          role: "user",
+          content: [{ type: "text", text: "The screenshot you asked for with look:" }, ...images],
+        });
       }
       continue;
     }
@@ -276,4 +299,63 @@ export async function callOpenAICompatible(
   }
 
   return fromOpenAI(await res.json());
+}
+
+// ── a question about one image (the vision check) ────────────────────────────
+
+/**
+ * Shows the model one JPEG and returns its answer as text. Used once per model
+ * to find out whether it can see at all (lib/agent/vision.ts). Throws like any
+ * model call: with `status` on an HTTP error.
+ */
+export async function askAboutImage(
+  cfg: ProviderConfig,
+  client: Anthropic | null,
+  jpeg: Buffer,
+  question: string,
+  timeoutMs: number,
+): Promise<string> {
+  const data = jpeg.toString("base64");
+  // room for models that reason before they answer
+  const maxTokens = 600;
+
+  if (cfg.kind === "anthropic") {
+    const res = await client!.messages.create(
+      {
+        model: cfg.model,
+        max_tokens: maxTokens,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data } },
+            { type: "text", text: question },
+          ],
+        }],
+      },
+      { timeout: timeoutMs, maxRetries: 0 },
+    );
+    return res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+  }
+
+  const res = await fetch(cfg.baseURL.replace(/\/+$/, "") + "/chat/completions", {
+    method: "POST",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify({
+      model: cfg.model,
+      max_tokens: maxTokens,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: question },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${data}` } },
+        ],
+      }],
+    }),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(`Model API ${res.status}`), { status: res.status });
+  }
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
+  return json.choices?.[0]?.message?.content ?? "";
 }

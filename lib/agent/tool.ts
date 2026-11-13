@@ -8,6 +8,8 @@ export interface ToolDef {
   schema: Anthropic.Tool;
   /** Acts on the page and returns its tree: only the last such call of a turn reads the page back. */
   page?: true;
+  /** Needs a model that can see images: offered only when vision is on. */
+  vision?: true;
   run: (input: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult>;
 }
 

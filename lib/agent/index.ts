@@ -9,10 +9,11 @@ import { snapshot } from "./snapshot";
 import { MODEL_TIMEOUT_MS, resolveProvider } from "../provider";
 import { type ToolContext } from "./context";
 import { PAGE_ACTIONS, executeTool } from "./handlers";
-import { callModel, compactHistory } from "./model";
+import { callModel, compactHistory, dropScreenshots } from "./model";
 import { wirePage, withNotices } from "./page";
 import { NUDGE } from "./prompt";
 import { isSecretField, redact, redactDeep, stripRefs } from "./redact";
+import { canSee, forgetVision } from "./vision";
 import { spawnWakeLock } from "./wakelock";
 
 // Hard cap is just a backstop against runaway loops (each iteration is a paid
@@ -77,6 +78,7 @@ export async function runAgent(
       net: new NetworkMonitor(context),
       step: { current: 1 },
       files,
+      vision: await canSee(cfg, client, browser),
       incoming: null,
       lastTree: null,
       wantTree: true,
@@ -86,6 +88,8 @@ export async function runAgent(
       secrets: new Set(),
     };
     wirePage(ctx, page);
+    const thisRun = getRun(runId);
+    if (thisRun) thisRun.vision = ctx.vision;
     // tabs the page opens itself (target=_blank, window.open): the agent is moved
     // to the newest one when the action that opened it returns — see adoptNewTab
     context.on("page", (opened) => {
@@ -131,7 +135,25 @@ export async function runAgent(
       await checkPause(runId);
       const trimmed = compactHistory(messages);
       const callStarted = Date.now();
-      const response = await callModel(cfg, client, trimmed);
+      let response: Anthropic.Message;
+      try {
+        response = await callModel(cfg, client, trimmed, ctx.vision);
+      } catch (err) {
+        // The endpoint took the vision check but refuses a real screenshot: go on
+        // by the page tree instead of failing the run.
+        const status = (err as { status?: number }).status ?? 0;
+        const refused = status >= 400 && status < 500 && ![401, 403, 429].includes(status);
+        const withoutShots = dropScreenshots(
+          messages,
+          "[the screenshot could not be shown: this model does not accept images — go on by the page tree]",
+        );
+        if (!ctx.vision || !refused || withoutShots === messages) throw err;
+        messages.splice(0, messages.length, ...withoutShots);
+        ctx.vision = false;
+        if (thisRun) thisRun.vision = false;
+        forgetVision(cfg);
+        continue;
+      }
       addStats(runId, {
         calls: 1,
         modelMs: Date.now() - callStarted,
@@ -259,10 +281,16 @@ export async function runAgent(
         try {
           const ret = await executeTool(name, input, ctx);
           if (toolStarted) addStats(runId, { browserMs: Date.now() - toolStarted });
+          const text = withNotices(ctx, ret.content);
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
-            content: withNotices(ctx, ret.content),
+            content: ret.image
+              ? [
+                  { type: "text", text },
+                  { type: "image", source: { type: "base64", media_type: "image/jpeg", data: ret.image.toString("base64") } },
+                ]
+              : text,
           });
           pushEvent(runId, {
             ts: Date.now(),

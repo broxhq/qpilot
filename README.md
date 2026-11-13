@@ -38,6 +38,13 @@ the Settings page, where you pick a model.
 There is no test code, no selectors and no config files. The agent reads the page
 as an accessibility tree on every action, so nothing is stored that can go stale.
 
+If the model can see images, the agent also looks at the page when text is not
+enough: an icon with no label, a picture, a chart, a canvas. It can click a point it
+sees, and it measures sizes, positions, overlap and colours in the browser instead of
+judging them by eye. Nothing to switch on — at the start of a run the agent checks
+whether the model reads a picture, and with a text-only model it works exactly as
+before.
+
 | | Manual testing | Scripted e2e | **qpilot** |
 |---|---|---|---|
 | To add a test | write the steps | write and maintain code | write the steps |

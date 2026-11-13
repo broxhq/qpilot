@@ -24,10 +24,12 @@ export function ref(tree, pattern) {
 
 /**
  * Starts the model on a free port. `requests` keeps every request body, so a
- * test can look at what the agent sent.
+ * test can look at what the agent sent; `visionChecks` keeps the "can you see?"
+ * questions separately.
  */
 export function startModel(script) {
   const requests = [];
+  const visionChecks = [];
   let turn = 0;
   const server = http.createServer((req, res) => {
     let raw = "";
@@ -36,6 +38,12 @@ export function startModel(script) {
       res.writeHead(200, { "content-type": "application/json" });
       if (req.method !== "POST") return res.end('{"data":[{"id":"scripted"}]}');
       const body = JSON.parse(raw);
+      // a request without tools is the agent asking "can you see this picture?" —
+      // a scripted model cannot, and says so
+      if (!body.tools) {
+        visionChecks.push(body);
+        return res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "I cannot see images." } }] }));
+      }
       requests.push(body);
       const results = body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
       const tree = [...results].reverse().find((r) => /\[ref=/.test(r)) ?? "";
@@ -54,6 +62,6 @@ export function startModel(script) {
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>
-      resolve({ url: `http://127.0.0.1:${server.address().port}/v1`, requests, close: () => server.close() })),
+      resolve({ url: `http://127.0.0.1:${server.address().port}/v1`, requests, visionChecks, close: () => server.close() })),
   );
 }

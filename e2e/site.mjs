@@ -1,6 +1,6 @@
 // The page under test: a small form whose switches toggle when the whole row is
-// clicked (a real bug this project was once used to catch), a password field, and
-// a button that calls an API. The page reports every toggle and call back to the
+// clicked (a real bug this project was once used to catch), a password field, a
+// button that calls an API, and a canvas that only a screenshot can find. The page reports every toggle and call back to the
 // server, so the test can check what really happened in the browser.
 
 import http from "node:http";
@@ -12,10 +12,13 @@ const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>
 <div class="row"><label><input type="checkbox" role="switch"> Ad labelling</label></div>
 <div class="row"><label>Password <input type="password" id="pw"></label></div>
 <button id="save">Save</button> <span id="status" role="status"></span>
+<canvas id="pad" width="200" height="60" style="position:absolute;left:600px;top:300px;background:#1565c0"></canvas>
 <script>
 const report = (what) => fetch("/seen?" + what);
 document.querySelectorAll("input[type=checkbox]").forEach((el, i) =>
   el.addEventListener("change", () => report("toggle=" + i + ":" + el.checked)));
+// something only eyes can find: a canvas has no place in the page tree
+document.getElementById("pad").onclick = () => report("canvas");
 document.getElementById("save").onclick = async () => {
   const res = await fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ password: document.getElementById("pw").value }) });

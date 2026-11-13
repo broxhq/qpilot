@@ -270,6 +270,7 @@ export default function RunPage({ params }: PageProps) {
           <p className="mt-1 text-[11px] font-mono tabular-nums text-subtle">
             {t.statsModel} {formatDuration(run.stats.modelMs)} · {run.stats.calls} {t.statsCalls} · {t.statsBrowser}{" "}
             {formatDuration(run.stats.browserMs)}
+            {run.vision && <> · {t.statsVision}</>}
           </p>
         )}
 

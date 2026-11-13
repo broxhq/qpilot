@@ -48,6 +48,7 @@ export interface Dict {
   statsModel: string;
   statsCalls: string;
   statsBrowser: string;
+  statsVision: string;
   showReasoning: string;
   hideReasoning: string;
   copyReport: string;
@@ -130,6 +131,10 @@ export interface Dict {
   action: {
     opening: string;
     readingPage: string;
+    looking: string;
+    measuring: string;
+    clickingAt: string;
+    hoveringAt: string;
     readingBlock: string;
     clicking: string;
     clickingElement: string;
@@ -197,6 +202,7 @@ const en: Dict = {
   statsModel: "model",
   statsCalls: "calls",
   statsBrowser: "browser",
+  statsVision: "sees screenshots",
   showReasoning: "Show agent reasoning",
   hideReasoning: "Hide agent reasoning",
   copyReport: "Copy report",
@@ -293,6 +299,10 @@ const en: Dict = {
   action: {
     opening: "Opening",
     readingPage: "Reading page",
+    looking: "Looking at the page",
+    measuring: "Measuring elements:",
+    clickingAt: "Clicking at",
+    hoveringAt: "Hovering at",
     readingBlock: "Reading block",
     clicking: "Clicking",
     clickingElement: "Clicking element",
@@ -360,6 +370,7 @@ const ru: Dict = {
   statsModel: "модель",
   statsCalls: "вызовов",
   statsBrowser: "браузер",
+  statsVision: "видит скриншоты",
   showReasoning: "Показать рассуждения агента",
   hideReasoning: "Скрыть рассуждения агента",
   copyReport: "Скопировать отчёт",
@@ -456,6 +467,10 @@ const ru: Dict = {
   action: {
     opening: "Открывает",
     readingPage: "Читает страницу",
+    looking: "Смотрит на страницу",
+    measuring: "Измеряет элементы:",
+    clickingAt: "Кликает в точку",
+    hoveringAt: "Наводит на точку",
     readingBlock: "Читает блок",
     clicking: "Кликает",
     clickingElement: "Кликает по элементу",

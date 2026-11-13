@@ -90,6 +90,7 @@ lib/agent/handlers/       one handler per tool: plan and verdicts, page actions,
 lib/agent/page.ts         acting on the page and reading it back: tabs, dialogs, results
 lib/network.ts            request mocks, the request log, console errors
 lib/agent/snapshot.ts     the page tree the model reads
+lib/agent/vision.ts       checks whether the model can see images
 lib/home-state.ts         state of the home page: draft, folder, attachments, batch
 lib/provider.ts           Anthropic and OpenAI-compatible model calls
 lib/store.ts              in-memory run state
@@ -105,10 +106,15 @@ The run page follows along over Server-Sent Events.
 
 ## Things that are easy to get wrong
 
-- **The agent is text-only.** The model sees an ARIA snapshot with `[ref=…]` on each
-  element, never a screenshot. Elements are located strictly by that ref
-  (`aria-ref=e12`, or `aria-ref=f1e2` inside an iframe). If you touch ref handling,
-  keep both forms working.
+- **The agent is text-first.** The model reads an ARIA snapshot with `[ref=…]` on each
+  element. Elements are located strictly by that ref (`aria-ref=e12`, or
+  `aria-ref=f1e2` inside an iframe). If you touch ref handling, keep both forms working.
+- **Eyes are optional and the agent decides.** At the start of a run `canSee`
+  (`lib/agent/vision.ts`) shows the model a picture of a random number; only a model
+  that reads it back gets the tools marked `vision: true` (`look`, `measure`,
+  `click_at`, `hover_at`) and the `EYES` block of the prompt. For any other model the
+  request must stay exactly what it was — `npm run e2e` checks both cases. Do not add
+  a setting for it. `QPILOT_VISION=0|1` overrides the check for debugging.
 - **Two providers, one history format.** Conversation history is always in Anthropic's
   message format. The OpenAI-compatible path converts it in `lib/provider.ts`, so the
   agent loop never needs to know which provider it talks to. Test both if you change

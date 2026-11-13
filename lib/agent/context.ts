@@ -14,6 +14,8 @@ export interface ToolContext {
   net: NetworkMonitor;
   step: { current: number };
   files: StoredFile[];
+  /** The model can be shown screenshots. Turned off mid-run if the endpoint refuses one. */
+  vision: boolean;
   /** A tab opened by the page that the agent hasn't been moved to yet. */
   incoming: Page | null;
   /** The page tree the model saw last — the next result says what changed against it. */
@@ -32,6 +34,8 @@ export interface ToolContext {
 
 export interface ToolResult {
   content: string;
+  /** A JPEG to show the model along with `content` (vision only). */
+  image?: Buffer;
   observation?: string;
   finished?: boolean;
 }

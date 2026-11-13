@@ -1,9 +1,9 @@
 // Talking to the model: one call with retries, and keeping the history within budget.
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { TOOLS } from "./handlers";
+import { toolsFor } from "./handlers";
 import { callOpenAICompatible, parseRetryAfter, type ProviderConfig } from "../provider";
-import { SYSTEM } from "./prompt";
+import { systemPrompt } from "./prompt";
 
 export const CONTEXT_BUDGET_CHARS = 64_000;
 
@@ -13,12 +13,65 @@ export const MAX_RETRIES = 5;
 
 export const MAX_BACKOFF_MS = 30_000;
 
-export function compactHistory(
+// Screenshots kept in the history. An older one shows a page that has changed since.
+const KEEP_SCREENSHOTS = 2;
+
+type ResultContent = Anthropic.ToolResultBlockParam["content"];
+
+/** The text of a tool result, whether it is plain or text + screenshot. */
+function textOf(content: ResultContent): string {
+  if (typeof content === "string") return content;
+  return (content ?? []).flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n");
+}
+
+const hasImage = (content: ResultContent) =>
+  Array.isArray(content) && content.some((p) => p.type === "image");
+
+/**
+ * Replaces screenshots in tool results with `note`: all of them, or all but the
+ * last `keep`. Returns the same array when there was nothing to replace.
+ */
+export function dropScreenshots(
   messages: Anthropic.MessageParam[],
+  note: string,
+  keep = 0,
 ): Anthropic.MessageParam[] {
+  let seen = 0;
+  let changed = false;
+  const out = [...messages];
+  for (let mi = out.length - 1; mi >= 0; mi--) {
+    const m = out[mi];
+    if (m.role !== "user" || !Array.isArray(m.content)) continue;
+    let touched = false;
+    const content = m.content.map((b) => b);
+    for (let bi = content.length - 1; bi >= 0; bi--) {
+      const b = content[bi];
+      if (b.type !== "tool_result" || !hasImage(b.content)) continue;
+      if (seen++ < keep) continue;
+      content[bi] = { ...b, content: `${textOf(b.content)}\n${note}` };
+      touched = true;
+    }
+    if (touched) {
+      out[mi] = { ...m, content };
+      changed = true;
+    }
+  }
+  return changed ? out : messages;
+}
+
+export function compactHistory(
+  history: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  const messages = dropScreenshots(history, "[the screenshot is no longer kept — look again if you need it]", KEEP_SCREENSHOTS);
+
+  // only text counts towards the budget: a screenshot is cheap for the model to
+  // read but huge as base64, and would push every page tree out of the history
   const size = messages.reduce((n, m) => {
-    const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
-    return n + c.length;
+    if (typeof m.content === "string") return n + m.content.length;
+    return n + m.content.reduce(
+      (k, b) => k + (b.type === "tool_result" ? textOf(b.content).length : JSON.stringify(b).length),
+      0,
+    );
   }, 0);
   if (size <= CONTEXT_BUDGET_CHARS) return messages;
 
@@ -41,8 +94,8 @@ export function compactHistory(
     if (m.role !== "user" || !Array.isArray(m.content)) return m;
     const content = (m.content as Anthropic.ToolResultBlockParam[]).map((b, bi) => {
       if (!truncate.has(`${mi}-${bi}`) || b?.type !== "tool_result") return b;
-      const c = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
-      return c.length < 400 ? b : { ...b, content: `[…old tool output (page snapshot or request list), ${c.length} chars omitted]` };
+      const c = textOf(b.content);
+      return c.length < 400 && !hasImage(b.content) ? b : { ...b, content: `[…old tool output (page snapshot or request list), ${c.length} chars omitted]` };
     });
     return { ...m, content };
   });
@@ -68,7 +121,11 @@ export async function callModel(
   cfg: ProviderConfig,
   client: Anthropic | null,
   messages: Anthropic.MessageParam[],
+  /** Offer the tools that need eyes, and the part of the prompt about them. */
+  vision: boolean,
 ): Promise<Anthropic.Message> {
+  const system = systemPrompt(vision);
+  const tools = toolsFor(vision);
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -76,13 +133,13 @@ export async function callModel(
         return await client!.messages.create({
           model: cfg.model,
           max_tokens: 2048,
-          system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           messages,
-          tools: TOOLS,
+          tools,
           tool_choice: { type: "auto" },
         });
       }
-      return await callOpenAICompatible(cfg, SYSTEM, messages, TOOLS);
+      return await callOpenAICompatible(cfg, system, messages, tools);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number }).status;

@@ -76,6 +76,8 @@ export interface Run {
   testCase: string;
   /** Language of the test case — the run page renders in it. See lib/i18n.ts. */
   language: "ru" | "en";
+  /** The model of this run can see screenshots (found out by the agent, see lib/agent/vision.ts). */
+  vision?: boolean;
   /** false = the run was started with a visible browser ("Run with preview"). */
   headless: boolean;
   events: RunEvent[];
