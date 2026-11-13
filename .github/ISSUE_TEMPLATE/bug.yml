@@ -1,0 +1,39 @@
+name: Bug report
+description: A run went wrong, or the app misbehaved
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. A wrong verdict counts — say which step and what the page really showed.
+    validations:
+      required: true
+  - type: textarea
+    id: case
+    attributes:
+      label: Test case
+      description: The test case text, if the problem is in a run. Remove real credentials.
+      render: text
+  - type: textarea
+    id: report
+    attributes:
+      label: Report or log
+      description: Paste "Copy report" from the run page, or the terminal output. A screenshot helps.
+  - type: input
+    id: version
+    attributes:
+      label: qpilot version
+      placeholder: "0.15.0"
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Provider and model
+      placeholder: "Anthropic / claude-haiku-4-5, or custom endpoint / model id"
+  - type: input
+    id: env
+    attributes:
+      label: OS, Node and Chrome versions
+      placeholder: "macOS 15, Node 22, Chrome 141"

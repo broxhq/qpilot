@@ -53,6 +53,19 @@ before.
 | OTP / captcha | handled by the human | usually blocks the run | pauses and asks you |
 | Output | you watched it | pass/fail | pass/fail/warn per step + evidence |
 
+### And next to other AI agents
+
+- **Browser agents for developers** (Playwright MCP, browser-use and the like) give
+  an AI assistant a browser to drive from an IDE or a chat. qpilot is for the person
+  who owns the test cases: paste the case, get a verdict per step with evidence, a
+  screenshot of every failure and a report to attach to the ticket. No IDE, no
+  prompt writing.
+- **Device agents** such as Google's Artemis automate Android phones. qpilot tests
+  web apps in desktop Chrome.
+- **What is specific to testing here:** request mocks and a request log, a second
+  check of every passed step, measured sizes and colours instead of "looks fine",
+  OTP and captcha handed to a human mid-run.
+
 ## Writing a test case
 
 ```
@@ -74,6 +87,8 @@ Steps:
 No format is required — headings, numbering and "Expected:" lines are all optional.
 The clearer the expected result, the stricter the check. Paste several test cases
 at once and the agent runs them in order, grouped in the UI.
+
+More examples and tips: [docs/test-case-format.md](docs/test-case-format.md).
 
 ## Attachments
 
@@ -172,6 +187,8 @@ provider you can skip setup entirely with an `ANTHROPIC_API_KEY` env var or a
 ## Contributing
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Questions go to [Discussions](https://github.com/broxhq/qpilot/discussions); for a
+security problem see [SECURITY.md](SECURITY.md).
 
 ---
 

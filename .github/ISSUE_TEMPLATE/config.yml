@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/broxhq/qpilot/discussions
+    about: How to write a test case, which model to use, anything that is not a bug.
+  - name: Security problem
+    url: https://github.com/broxhq/qpilot/security/advisories/new
+    about: Report it privately, not in a public issue.

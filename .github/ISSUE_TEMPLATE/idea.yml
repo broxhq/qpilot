@@ -1,0 +1,15 @@
+name: Idea
+description: Something qpilot should be able to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to test
+      description: The situation, not the solution — the test case you could not run, or the manual check you still do by hand.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
