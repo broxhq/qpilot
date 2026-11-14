@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="840" alt="A test case is pasted, the agent runs five steps in Chrome, three pass and two fail with the expected and actual result and a screenshot">
+  <img src="docs/assets/demo-run.gif" width="840" alt="A test case is pasted, the agent runs five steps in Chrome, three pass and two fail with the expected and actual result and a screenshot">
 </p>
 
 <p align="center">
