@@ -3,7 +3,7 @@
 
 import { type Locator, type Page } from "playwright";
 import { pushEvent } from "../store";
-import { snapshot } from "./snapshot";
+import { readPage } from "./snapshot";
 import { type RunEvent } from "../types";
 import { REF_RE, type ToolContext, type ToolResult } from "./context";
 
@@ -107,10 +107,14 @@ export async function actionResult(ctx: ToolContext, msg: string): Promise<ToolR
     return { content: `${msg}\n(the page tree comes with the last action of this turn)`, observation: msg };
   }
   await ctx.net.waitForQuiet(ctx.actionStarted, 4000);
-  const tree = await snapshot(ctx.page).catch(() => "");
+  const read = await readPage(ctx.page).catch(() => null);
+  const tree = read?.view ?? "";
   const tabs = tabsLine(ctx);
-  const changes = tree ? describeChanges(ctx.lastTree, tree) : "";
-  if (tree) ctx.lastTree = tree;
+  const changes = read ? describeChanges(ctx.lastFull, read.full) : "";
+  if (read) {
+    ctx.lastTree = read.view;
+    ctx.lastFull = read.full;
+  }
   const body = [msg, tabs, changes, tree].filter(Boolean).join("\n\n");
   return { content: body, observation: msg };
 }

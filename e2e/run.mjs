@@ -338,6 +338,38 @@ try {
     assert.ok(!site.seen.includes("buried-scrolled"), "…and the hidden list was left alone");
     console.log("✓ scrolling moves the list under the pointer and refuses one that is not on screen");
   }
+
+  // ── 7. a page bigger than the budget: what is on screen comes first ─────────
+  {
+    const { model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the bell — the panel opens"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "big" })],
+        (tree, call) => [call("click", { ref: ref(tree, /menu-communication/) })],
+        (_tree, call) => [call("snapshot", { near: "Notices" })],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "the panel opens", evidence: "Fresh notice 1 is listed", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Big\n1. Open the bell.",
+      { QPILOT_VISION: "0" },
+    );
+    const results = toolResults(model.requests.at(-1));
+    const split = (c) => c.split("OFF SCREEN");
+    const opened = results.find((c) => c.startsWith("OK: navigated")) ?? "";
+    assert.equal(split(opened).length, 2, "a big page comes in two parts");
+    assert.match(split(opened)[0], /button \[ref=e\d+\] \(no name; data-testid=menu-communication/, "the header at the end of the DOM is in the on-screen part, with its hint");
+    assert.doesNotMatch(split(opened)[0], /Report line 400|Old notice 1/, "what is down the page is not in the on-screen part");
+    assert.match(split(opened)[1], /Report line 30/, "…the rest follows in page order");
+    const clicked = results.find((c) => /^OK: clicked/.test(c)) ?? "";
+    assert.match(clicked.split("Page snapshot")[0], /\+ .*Fresh notice 1/, "the opened panel is listed under Changes although it is past the cut");
+    assert.match(split(clicked)[0], /Fresh notice 1/, "…and is shown in the on-screen part");
+    const near = results.find((c) => c.includes('scoped to the block around "Notices"')) ?? "";
+    assert.match(near, /Fresh notice 1/, "near= picks the block that is on screen");
+    assert.doesNotMatch(near, /Old notice 1/, "…not its namesake down the page");
+    console.log("✓ a page bigger than the budget shows what is on screen first");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);

@@ -23,6 +23,8 @@ export interface ToolContext {
   incoming: Page | null;
   /** The page tree the model saw last — the next result says what changed against it. */
   lastTree: string | null;
+  /** The same page uncut: changes are looked for here, the model's copy may be cut to the budget. */
+  lastFull: string | null;
   /** false for all but the last page action of a turn: only that one returns the page tree. */
   wantTree: boolean;
   /** When the current tool call started — settling waits only for requests sent after it. */

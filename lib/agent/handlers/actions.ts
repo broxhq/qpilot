@@ -1,7 +1,7 @@
 // Tools that act on the page.
 
 import { type Locator, type Page } from "playwright";
-import { findAnchor, snapshot } from "../snapshot";
+import { findAnchor, readPage } from "../snapshot";
 import { REF_RE } from "../context";
 import { actionResult, clickWithHint, locate, tabsLine } from "../page";
 import { type ScrollResult, describeScroll, pointerSpot, screenTop, scrollNearest, wheel } from "../scroll";
@@ -39,11 +39,12 @@ export const actionsTools: ToolDef[] = [
     },
     run: async (input, ctx) => {
       const { page } = ctx;
-      const tree = await snapshot(
-        page,
-        typeof input.near === "string" ? input.near : undefined,
-      );
-      if (typeof input.near !== "string") ctx.lastTree = tree;
+      const read = await readPage(page, typeof input.near === "string" ? input.near : undefined);
+      const tree = read.view;
+      if (typeof input.near !== "string") {
+        ctx.lastTree = read.view;
+        ctx.lastFull = read.full;
+      }
       // don't push the full tree to events/SSE — the UI doesn't render it anyway
       return { content: tree, observation: `Page read (${tree.length} chars)` };
     },

@@ -43,6 +43,28 @@ for (const id of ["list", "buried"]) {
 }
 </script></body></html>`;
 
+// A page too big for the model's budget, built the way real portals are: the
+// header is fixed but sits at the END of the DOM, its icons have no names, and a
+// "Notices" widget far down the page has the same title as the panel the bell opens.
+const rows = Array.from({ length: 420 }, (_, i) => `<p><a href="#r${i}">Report line ${i + 1}</a> <span>amount ${i * 7}</span></p>`).join("");
+const big = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Big</title></head><body style="margin:0;padding-top:60px">
+<h1>Dashboard</h1>
+${rows}
+<section><h2>Notices</h2><ul><li>Old notice 1</li><li>Old notice 2</li></ul></section>
+<div id="portal"><div style="position:fixed;top:0;left:0;right:0;height:50px;background:#fff">
+  <button data-testid="menu-chat" style="width:36px;height:36px"><svg width="16" height="16"></svg></button>
+  <button data-testid="menu-communication" style="width:36px;height:36px" onclick="openPanel()"><svg width="16" height="16"></svg></button>
+  <button data-testid="menu-support" style="width:36px;height:36px"><svg width="16" height="16"></svg></button>
+</div></div>
+<script>
+function openPanel() {
+  const d = document.createElement("div");
+  d.style.cssText = "position:fixed;top:50px;right:0;width:400px;height:500px;background:#fff;overflow:auto";
+  d.innerHTML = "<h2>Notices</h2><ul><li>Fresh notice 1</li><li>Fresh notice 2</li></ul>";
+  document.body.appendChild(d);
+}
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -57,7 +79,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

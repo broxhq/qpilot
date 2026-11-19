@@ -137,6 +137,7 @@ export async function runAgent(
       vision: await canSee(cfg, client, browser),
       incoming: null,
       lastTree: null,
+      lastFull: null,
       wantTree: true,
       actionStarted: Date.now(),
       dialogPolicy: null,
