@@ -26,6 +26,23 @@ document.getElementById("save").onclick = async () => {
 };
 </script></body></html>`;
 
+// A side panel over the page with a list that scrolls on its own, and under a
+// cover a second list nobody can see: scrolling must move the first one for real
+// and refuse to "scroll" the second.
+const items = (label) => Array.from({ length: 40 }, (_, i) => `<button style="display:block;height:40px;width:100%">${label} ${i + 1}</button>`).join("");
+const panel = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Panel</title></head><body style="margin:0">
+<h1>Page under the panel</h1>
+<div id="buried" style="position:absolute;left:20px;top:100px;width:300px;height:300px;overflow:auto">${items("Buried")}</div>
+<div id="cover" style="position:fixed;left:0;top:80px;width:400px;height:400px;background:#eee"></div>
+<aside id="list" style="position:fixed;right:0;top:0;width:400px;height:600px;overflow:auto;background:#fff">${items("Notice")}</aside>
+<script>
+const report = (what) => fetch("/seen?" + what);
+for (const id of ["list", "buried"]) {
+  let told = false;
+  document.getElementById(id).addEventListener("scroll", () => { if (!told) { told = true; report(id + "-scrolled"); } });
+}
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -40,7 +57,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(page);
+    res.end(req.url === "/panel" ? panel : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

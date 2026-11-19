@@ -4,7 +4,7 @@ import { type Locator, type Page } from "playwright";
 import { findAnchor, snapshot } from "../snapshot";
 import { REF_RE } from "../context";
 import { actionResult, clickWithHint, locate, tabsLine } from "../page";
-import { type ScrollResult, describeScroll, pointInScrollBlock, scrollNearest, wheel } from "../scroll";
+import { type ScrollResult, describeScroll, pointerSpot, screenTop, scrollNearest, wheel } from "../scroll";
 import { type ToolDef, ref, label } from "../tool";
 
 export const actionsTools: ToolDef[] = [
@@ -228,6 +228,7 @@ export const actionsTools: ToolDef[] = [
       const ref = typeof input.ref === "string" ? input.ref.trim() : "";
 
       let res: ScrollResult;
+      let seen = "";
       if (REF_RE.test(ref)) {
         const loc = page.locator(`aria-ref=${ref}`);
         if ((await loc.count()) === 0) {
@@ -237,22 +238,36 @@ export const actionsTools: ToolDef[] = [
         // A programmatic scrollBy leaves the pointer where it was, so a panel
         // that is open only while hovered closes under the agent, and lists
         // that react to the wheel never load their next page.
-        const before = await loc.evaluate(scrollNearest, { x: 0, y: 0 });
-        const spot = await loc.evaluate(pointInScrollBlock);
-        if (spot) {
+        const spot = await loc.evaluate(pointerSpot);
+        if (spot && "covered" in spot) {
+          // Scrolling it from a script would move a block nobody sees and report
+          // success: on a real page the agent "scrolled" such a list to its end
+          // while the list on screen stood still, and blamed the page.
+          return actionResult(
+            ctx,
+            `Not scrolled: the block this element sits in is not what is on screen there — ${spot.covered}. It is behind an overlay or is a hidden copy. Close what covers it, or take an element of the list you actually see (look shows it).`,
+          );
+        }
+        if (!spot) {
+          // no scrollable block around the element: the page itself scrolls
+          res = await loc.evaluate(scrollNearest, { x, y });
+        } else {
+          const before = await loc.evaluate(scrollNearest, { x: 0, y: 0 });
+          const topBefore = await loc.evaluate(screenTop);
           await page.mouse.move(spot.x, spot.y);
           await wheel(page, x, y);
-        }
-        const after = await loc.evaluate(scrollNearest, { x: 0, y: 0 }).catch(() => before);
-        res = { ...after, movedX: after.posX - before.posX, movedY: after.posY - before.posY };
-        if (res.movedX === 0 && res.movedY === 0 && (x !== 0 || y !== 0)) {
-          // the wheel moved nothing (something else was under the pointer): scroll the block directly
-          res = await loc.evaluate(scrollNearest, { x, y });
+          const after = await loc.evaluate(scrollNearest, { x: 0, y: 0 }).catch(() => before);
+          res = { ...after, movedX: after.posX - before.posX, movedY: after.posY - before.posY };
+          // what the eye sees: the element itself must have moved with the block
+          const shift = await loc.evaluate(screenTop).then((t) => topBefore - t).catch(() => null);
+          if (shift !== null && res.movedY !== 0) seen = Math.abs(shift) >= 2
+            ? ` The element moved ${shift}px on screen.`
+            : " But the element itself did not move on screen — the block that scrolled is not the list you see; do not take this as scrolling the list.";
         }
       } else {
         res = await page.evaluate(scrollNearest, { x, y });
       }
-      return actionResult(ctx, describeScroll(res, x, y));
+      return actionResult(ctx, describeScroll(res, x, y) + seen);
     },
   },
 

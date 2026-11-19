@@ -35,7 +35,8 @@ export function scrollNearest(
           ? n.scrollWidth > n.clientWidth + 1
           : n.scrollHeight > n.clientHeight + 1;
       if (/(auto|scroll|overlay)/.test(ov) && room) return n;
-      n = n.parentElement;
+      // out of a shadow root too: a panel of a micro-frontend often lives in one
+      n = n.parentElement ?? ((n.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
     }
     return null;
   };
@@ -77,30 +78,75 @@ export function scrollNearest(
   };
 }
 
+export type PointerSpot = { x: number; y: number } | { covered: string } | null;
+
 /**
- * Runs IN THE BROWSER. A point inside the visible part of the nearest scrollable
- * ancestor of the element — where a person would rest the pointer to scroll that
- * block. The element itself may be scrolled out of view, so its own position is
- * no use. null when the block is the page itself.
+ * Runs IN THE BROWSER. Where a person would rest the pointer to scroll the block
+ * the element sits in: a point of that block which is really on screen — the
+ * element itself when it is visible, else another spot of the block (the element
+ * may be scrolled out of view). Every candidate is hit-tested: a block behind an
+ * overlay, or a hidden copy of a panel, has no such point, and then the answer
+ * says what covers it instead. null when the block is the page itself.
  */
-export function pointInScrollBlock(el: Element): { x: number; y: number } | null {
-  let n: Element | null = el;
-  while (n && n !== document.body && n !== document.documentElement) {
-    const st = getComputedStyle(n);
-    const scrollsY = /(auto|scroll|overlay)/.test(st.overflowY) && n.scrollHeight > n.clientHeight + 1;
-    const scrollsX = /(auto|scroll|overlay)/.test(st.overflowX) && n.scrollWidth > n.clientWidth + 1;
-    if (scrollsY || scrollsX) {
-      const r = n.getBoundingClientRect();
-      const left = Math.max(r.left, 0);
-      const top = Math.max(r.top, 0);
-      const right = Math.min(r.right, window.innerWidth);
-      const bottom = Math.min(r.bottom, window.innerHeight);
-      if (right - left < 4 || bottom - top < 4) return null;
-      return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
-    }
-    n = n.parentElement;
+export function pointerSpot(el: Element): PointerSpot {
+  const up = (n: Element): Element | null =>
+    n.parentElement ?? ((n.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
+
+  let block: Element | null = el;
+  while (block && block !== document.body && block !== document.documentElement) {
+    const st = getComputedStyle(block);
+    const scrollsY = /(auto|scroll|overlay)/.test(st.overflowY) && block.scrollHeight > block.clientHeight + 1;
+    const scrollsX = /(auto|scroll|overlay)/.test(st.overflowX) && block.scrollWidth > block.clientWidth + 1;
+    if (scrollsY || scrollsX) break;
+    block = up(block);
   }
-  return null;
+  if (!block || block === document.body || block === document.documentElement) return null;
+
+  // what is on screen at a point, looking inside shadow roots
+  const hit = (x: number, y: number): Element | null => {
+    let h = document.elementFromPoint(x, y);
+    while (h?.shadowRoot) {
+      const inner = h.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === h) break;
+      h = inner;
+    }
+    return h;
+  };
+  const inBlock = (h: Element | null): boolean => {
+    for (let n = h; n; n = up(n)) if (n === block) return true;
+    return false;
+  };
+
+  const r = block.getBoundingClientRect();
+  const left = Math.max(r.left, 0);
+  const top = Math.max(r.top, 0);
+  const right = Math.min(r.right, window.innerWidth);
+  const bottom = Math.min(r.bottom, window.innerHeight);
+  const describe = (h: Element | null): string => {
+    if (!h) return "nothing of it is on screen";
+    const id = h.id ? `#${h.id}` : "";
+    const cls = typeof h.className === "string" && h.className ? `.${h.className.trim().split(/\s+/).slice(0, 2).join(".")}` : "";
+    return `<${h.tagName.toLowerCase()}${id}${cls}> is on top of it`;
+  };
+  if (right - left < 4 || bottom - top < 4) return { covered: describe(null) };
+
+  const points: [number, number][] = [];
+  const own = el.getBoundingClientRect();
+  const ox = (own.left + own.right) / 2;
+  const oy = (own.top + own.bottom) / 2;
+  if (own.width > 0 && own.height > 0 && ox > left && ox < right && oy > top && oy < bottom) points.push([ox, oy]);
+  for (const [fx, fy] of [[0.5, 0.5], [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5], [0.2, 0.2], [0.8, 0.8]]) {
+    points.push([left + (right - left) * fx, top + (bottom - top) * fy]);
+  }
+  for (const [x, y] of points) {
+    if (inBlock(hit(x, y))) return { x: Math.round(x), y: Math.round(y) };
+  }
+  return { covered: describe(hit(points[0][0], points[0][1])) };
+}
+
+/** Runs IN THE BROWSER. Where the element is on screen — to tell whether a scroll moved what the eye sees. */
+export function screenTop(el: Element): number {
+  return Math.round(el.getBoundingClientRect().top);
 }
 
 /** Turn the mouse wheel in small steps, like a hand on a touchpad, so scroll handlers see a real scroll. */

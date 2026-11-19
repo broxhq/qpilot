@@ -313,6 +313,31 @@ try {
     assert.equal(model.requests.length, 4, "no model call after the third");
     console.log("✓ three steps closed in a row stop the run");
   }
+
+  // ── 6. a list in a panel scrolls under the pointer; a list nobody sees does not ─
+  {
+    const { model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Scroll the panel — it scrolls"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "panel" })],
+        (tree, call) => [call("scroll", { ref: ref(tree, /button "Notice 1"/), y: 300 })],
+        (tree, call) => [call("scroll", { ref: ref(tree, /button "Buried 1"/), y: 300 })],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "it scrolls", evidence: "the panel moved by 300px", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Panel\n1. Scroll the panel.",
+      { QPILOT_VISION: "0" },
+    );
+    const results = toolResults(model.requests.at(-1));
+    const visible = results.find((c) => c.includes("scrolled <aside> block"));
+    assert.match(visible ?? "", /by \(0, 300\)px.*The element moved 300px on screen/s, "the panel list scrolls, and the result says the item moved on screen");
+    assert.match(results.find((c) => c.startsWith("Not scrolled")) ?? "", /<div#cover> is on top of it/, "a list under a cover is not scrolled, and the result says what covers it");
+    assert.ok(site.seen.includes("list-scrolled"), "the page saw the panel scroll");
+    assert.ok(!site.seen.includes("buried-scrolled"), "…and the hidden list was left alone");
+    console.log("✓ scrolling moves the list under the pointer and refuses one that is not on screen");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);
