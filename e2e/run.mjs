@@ -264,6 +264,55 @@ try {
     assert.equal(model.reviews[1].tools, undefined);
     console.log("✓ a pass the second opinion objects to becomes a warn with the reason");
   }
+
+  // 41 different actions on one step: one more than the framework allows
+  const wander = (tag) => (_tree, call) => Array.from({ length: 41 }, (_, i) => call("note", { text: `${tag} ${i}` }));
+
+  // ── 4. a step the agent cannot finish is closed for it, the run goes on ──────
+  {
+    const { run, model, shots } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Wander about", "Open the form — the form is shown"] }] })],
+        wander("first"),
+        (_tree, call) => [call("report_step", { num: 1, evidence: "done after all", status: "pass" }), call("navigate", { url: site.url })],
+        (_tree, call) => [
+          call("report_step", { num: 2, expected: "the form is shown", evidence: "heading Banner form", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Wander\n1. Wander about.\n2. Open the form.",
+      { QPILOT_VISION: "0" },
+    );
+
+    assert.deepEqual(run.steps.map((s) => s.status), ["fail", "pass"], "the step is closed as fail, the next one is still run");
+    assert.match(run.steps[0].evidence, /40 actions/, "the card says why it was closed");
+    assert.equal(shots[1]?.type, "image/jpeg", "…with a screenshot of the moment");
+    assert.equal(run.status, "failed");
+    const told = toolResults(model.requests[2]);
+    assert.equal(told.filter((c) => c.includes("OK: noted")).length, 40, "40 actions ran");
+    assert.match(told.at(-1), /not executed\. Step 1 was closed by the framework as fail.*Go on with step 2/, "the 41st did not, and the model is sent on");
+    assert.match(toolResults(model.requests[3]).find((c) => c.includes("already reported")) ?? "", /step 1 is already reported as fail/, "the agent cannot overrule it");
+    console.log("✓ a step that eats 40 actions is closed as fail and the run goes on");
+  }
+
+  // ── 5. three such steps in a row end the run ─────────────────────────────────
+  {
+    const { run, model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["One", "Two", "Three", "Four"] }] })],
+        wander("one"),
+        wander("two"),
+        wander("three"),
+      ],
+      "Lost\n1. One.\n2. Two.\n3. Three.\n4. Four.",
+      { QPILOT_VISION: "0" },
+    );
+
+    assert.deepEqual(run.steps.map((s) => s.status), ["fail", "fail", "fail", "skipped"], "three steps closed, the rest not attempted");
+    assert.match(run.summary, /3 steps in a row/);
+    assert.equal(model.requests.length, 4, "no model call after the third");
+    console.log("✓ three steps closed in a row stop the run");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);

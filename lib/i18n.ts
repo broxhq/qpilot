@@ -41,6 +41,8 @@ export interface Dict {
   consoleErrors: string;
   mockUnverified: string;
   reviewerObjects: string;
+  /** Evidence of a step the framework closed itself; {n} = actions spent. */
+  stepCutOff: string;
   infoNewTab: string;
   infoTabClosed: string;
   infoDialog: string;
@@ -195,6 +197,7 @@ const en: Dict = {
   actual: "Actual",
   consoleErrors: "Console errors during this step",
   reviewerObjects: "The agent passed this step, a second check disagrees",
+  stepCutOff: "Not completed: the agent spent {n} actions on this step without reaching a verdict, so the step was closed automatically. Check it by hand.",
   mockUnverified: "The mocked response was made up without a real one to compare with — its structure may not match what the page expects.",
   infoNewTab: "A new tab opened",
   infoTabClosed: "The tab was closed, back to",
@@ -364,6 +367,7 @@ const ru: Dict = {
   actual: "Фактически",
   consoleErrors: "Ошибки в консоли на этом шаге",
   reviewerObjects: "Агент засчитал шаг, повторная проверка не согласна",
+  stepCutOff: "Не выполнен: агент потратил {n} действий на этот шаг и не вынес вердикт, поэтому шаг закрыт автоматически. Проверьте его вручную.",
   mockUnverified: "Подменённый ответ придуман без сверки с настоящим — его структура может не совпадать с тем, что ждёт страница.",
   infoNewTab: "Открылась новая вкладка",
   infoTabClosed: "Вкладка закрыта, возврат на",

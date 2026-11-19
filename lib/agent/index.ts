@@ -3,26 +3,32 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { chromium, type Browser } from "playwright";
 import { cleanupUploads } from "../attachments";
-import { addStats, checkPause, getFiles, getRun, pushEvent } from "../store";
+import { dict } from "../i18n";
+import { addStats, checkPause, getFiles, getRun, pushEvent, saveScreenshot } from "../store";
 import { NetworkMonitor } from "../network";
 import { snapshot } from "./snapshot";
 import { MODEL_TIMEOUT_MS, resolveProvider } from "../provider";
 import { type ToolContext } from "./context";
 import { PAGE_ACTIONS, executeTool } from "./handlers";
 import { callModel, compactHistory, dropScreenshots } from "./model";
-import { wirePage, withNotices } from "./page";
+import { captureEvidence, wirePage, withNotices } from "./page";
 import { NUDGE } from "./prompt";
 import { isSecretField, redact, redactDeep, stripRefs } from "./redact";
 import { Reviewer } from "./reviewer";
 import { canSee, forgetVision } from "./vision";
 import { spawnWakeLock } from "./wakelock";
 
-// Hard cap is just a backstop against runaway loops (each iteration is a paid
-// model call). Real loops are caught earlier by the repetition guard: if the last
-// STUCK_WINDOW actions since the last progress have <= STUCK_DISTINCT unique
-// signatures, the agent is repeating itself (e.g. a blocked action it can't
-// resolve). A legit complex step does many DIFFERENT actions, so it isn't flagged.
-const MAX_ITERATIONS = 200;
+// A run is limited by progress, not by its length: a case of 50 steps is as
+// legitimate as one of 5. What is limited is the work on ONE step — see
+// STEP_ACTION_LIMIT — and how many steps in a row may end that way.
+//
+// The cap on model calls is only a backstop (each iteration is a paid call): it
+// grows with the plan and is not meant to be reached. Loops are caught earlier
+// by the repetition guard: if the last STUCK_WINDOW actions since the last
+// progress have <= STUCK_DISTINCT unique signatures, the agent is repeating
+// itself (e.g. a blocked action it can't resolve). A legit complex step does
+// many DIFFERENT actions, so it isn't flagged.
+const BASE_ITERATIONS = 200;
 
 const STUCK_WINDOW = 24;
 
@@ -31,7 +37,55 @@ const STUCK_DISTINCT = 4;
 // Actions on a single step before the agent is told to wrap it up.
 const STEP_ACTION_BUDGET = 15;
 
+// Actions on a single step before the framework closes it as fail and moves the
+// agent on: one lost step instead of a run that never gets to the rest.
+const STEP_ACTION_LIMIT = 40;
+
+// That many steps closed by the framework in a row: the agent has lost its way
+// or the page under test is unusable — going on would only spend model calls.
+const MAX_CUT_OFF_IN_A_ROW = 3;
+
 const MAX_EMPTY_TURNS = 3;
+
+/**
+ * Closes the step the agent is on as fail, on the framework's behalf, and moves
+ * on to the next queued one. Returns what to tell the model, or null when there
+ * is no such step in the plan to close.
+ */
+async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | null> {
+  const { runId } = ctx;
+  const run = getRun(runId);
+  const plan = run?.steps ?? [];
+  const num = ctx.step.current;
+  const planned = plan.find((s) => s.num === num && s.status === "queued");
+  if (!planned) return null;
+
+  let screenshot: string | undefined;
+  const shot = await captureEvidence(ctx.page);
+  if (shot) {
+    saveScreenshot(runId, num, shot);
+    screenshot = `/api/run/${runId}/shot/${num}`;
+  }
+  const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
+  const step = {
+    num,
+    description: planned.description,
+    status: "fail" as const,
+    evidence: dict(run?.language).stepCutOff.replace("{n}", String(spent)),
+    screenshot,
+    consoleErrors: consoleErrors.length ? consoleErrors : undefined,
+  };
+  pushEvent(runId, { ts: Date.now(), kind: "step", step, stepNum: num });
+  // nothing to review, but the records of this step must not leak into the next one
+  ctx.reviewer.review(ctx, step, undefined);
+
+  const upcoming = plan.find((s) => s.num !== num && s.status === "queued");
+  ctx.step.current = upcoming?.num ?? num + 1;
+  return (
+    `Step ${num} was closed by the framework as fail: ${spent} actions without a verdict. Do not report it and do not go back to it. ` +
+    (upcoming ? `Go on with step ${upcoming.num}: "${upcoming.description}".` : "All steps are reported — call finish.")
+  );
+}
 
 // Signature of a tool call for loop detection: tool + its semantic target +
 // value. Different fields/values/labels => different signatures, so a varied
@@ -132,8 +186,12 @@ export async function runAgent(
     let sigsSinceProgress: string[] = [];
     let budgetStep = ctx.step.current;
     let actionsOnStep = 0;
+    let cutOffInARow = 0;
+    // the plan arrives with the first turn, so the cap is read anew every iteration
+    const iterationLimit = () =>
+      Math.max(BASE_ITERATIONS, (getRun(runId)?.steps.length ?? 0) * STEP_ACTION_LIMIT);
 
-    for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+    for (let iter = 0; iter < iterationLimit(); iter++) {
       await checkPause(runId);
       const trimmed = compactHistory(messages);
       const callStarted = Date.now();
@@ -222,12 +280,25 @@ export async function runAgent(
       // Only the last page action of the turn reads the page back (see actionResult).
       const lastPageAction = toolUseBlocks.map((t) => PAGE_ACTIONS.has(t.name)).lastIndexOf(true);
       let actedThisTurn = false;
+      // set when the framework closed the step during this turn: what is left of
+      // the turn was meant for that step and is not run
+      let cutOff = "";
 
       for (const [index, b] of toolUseBlocks.entries()) {
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
         ctx.wantTree = index === lastPageAction;
         ctx.actionStarted = Date.now();
+
+        if (cutOff) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: b.id,
+            content: `Error: not executed. ${cutOff}`,
+            is_error: true,
+          });
+          continue;
+        }
 
         // A verdict given in the same turn as the action it judges is a guess:
         // the model has not seen the result yet.
@@ -241,6 +312,29 @@ export async function runAgent(
           });
           continue;
         }
+        // A step that eats dozens of actions means the agent has wandered off
+        // (extra checks, undoing its own clicks). First pull it back to the
+        // report; past the limit, close the step for it and move on.
+        if (ctx.step.current !== budgetStep) {
+          budgetStep = ctx.step.current;
+          actionsOnStep = 0;
+        }
+        const countsAsAction = name !== "report_step" && name !== "set_plan" && name !== "finish";
+        if (countsAsAction && actionsOnStep >= STEP_ACTION_LIMIT) {
+          const closed = await cutOffStep(ctx, actionsOnStep);
+          if (closed) {
+            cutOff = closed;
+            cutOffInARow++;
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: b.id,
+              content: `Error: not executed. ${cutOff}`,
+              is_error: true,
+            });
+            continue;
+          }
+        }
+
         if (PAGE_ACTIONS.has(name)) {
           actedThisTurn = true;
           const what = input.name ?? input.url ?? input.text ?? input.key ?? "";
@@ -249,17 +343,11 @@ export async function runAgent(
 
         sigsSinceProgress.push(actionSig(name, input));
 
-        // A step that eats dozens of actions means the agent has wandered off
-        // (extra checks, undoing its own clicks). Pull it back to the report.
-        if (ctx.step.current !== budgetStep) {
-          budgetStep = ctx.step.current;
-          actionsOnStep = 0;
-        }
-        if (name !== "report_step" && name !== "set_plan" && name !== "finish") {
+        if (countsAsAction) {
           actionsOnStep++;
           if (actionsOnStep === STEP_ACTION_BUDGET || (actionsOnStep > STEP_ACTION_BUDGET && actionsOnStep % 10 === 0)) {
             ctx.notices.push(
-              `You have spent ${actionsOnStep} actions on step ${ctx.step.current}. Do only what the step asks. If its expected result is not there by now, report the step as fail (or warn) with what you observed and go on — do not keep trying.`,
+              `You have spent ${actionsOnStep} actions on step ${ctx.step.current}. Do only what the step asks. If its expected result is not there by now, report the step as fail (or warn) with what you observed and go on — do not keep trying. At ${STEP_ACTION_LIMIT} actions the step is closed as fail without your verdict.`,
             );
           }
         }
@@ -304,6 +392,8 @@ export async function runAgent(
           });
           if (ret.finished) finished = true;
           if (name === "navigate" || name === "ask_user") progressedThisTurn = true;
+          // a verdict of the agent's own ends a series of steps closed for it
+          if (name === "report_step" && ret.content.startsWith("OK:")) cutOffInARow = 0;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.reviewer.record(name, input, `Error: ${message}`);
@@ -331,6 +421,17 @@ export async function runAgent(
       }
 
       if (finished) break;
+
+      if (cutOffInARow >= MAX_CUT_OFF_IN_A_ROW) {
+        await ctx.reviewer.settle();
+        pushEvent(runId, {
+          ts: Date.now(),
+          kind: "done",
+          status: "failed",
+          summary: `Stopped: ${cutOffInARow} steps in a row were not completed within ${STEP_ACTION_LIMIT} actions each — the agent has lost its way or the page under test is not usable.`,
+        });
+        break;
+      }
 
       // Repetition guard: progress (a completed step / navigate / user answer)
       // clears the buffer. Otherwise, if many actions pile up with very few
@@ -363,7 +464,7 @@ export async function runAgent(
         ts: Date.now(),
         kind: "done",
         status: "failed",
-        summary: `Reached the ${MAX_ITERATIONS}-step limit before calling finish — the run is incomplete.`,
+        summary: `Reached the limit of ${iterationLimit()} model calls before calling finish — the run is incomplete.`,
       });
     }
   } catch (err) {
