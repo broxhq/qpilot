@@ -68,8 +68,19 @@ function openPanel() {
 // Saving fails, and the only sign of it is a toast with no role and a hashed
 // class that is gone in a second and a half.
 const toast = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Toast</title></head><body>
-<h1>Form</h1><button onclick="save()">Save</button>
+<h1>Form</h1><button onclick="save()">Save</button> <button onclick="check()">Check</button>
+<ul id="list"><li>Stays here</li></ul>
 <script>
+// not a toast at all: a plain line in the flow of the page, gone in a second and a half
+function check() {
+  const line = document.createElement("p");
+  line.textContent = "This name is taken";
+  document.body.appendChild(line);
+  setTimeout(() => line.remove(), 1500);
+  // and a re-render, which must not count: the same words in a new node
+  const list = document.getElementById("list");
+  setTimeout(() => (list.innerHTML = "<li>Stays here</li>"), 700);
+}
 function save() {
   const box = document.createElement("div");
   box.style.cssText = "position:fixed;top:20px;right:20px;width:320px";

@@ -1,4 +1,5 @@
-// Messages that show up and vanish on their own: toasts, snackbars, alerts.
+// What shows up on the page and vanishes on its own: a toast, an alert, an
+// error line under a field, a "Saved" mark next to a button.
 //
 // "Save failed" slides in for three seconds and is gone before the model's next
 // look: the tree is read after the page settles and the model takes ten seconds
@@ -12,7 +13,10 @@ import { type ToolContext } from "./context";
 import { captureEvidence, note } from "./page";
 import { redact } from "./redact";
 
-export const FLASH_NOTE = "A message appeared on the page and vanished on its own";
+export const FLASH_NOTE = "Appeared on the page and vanished on its own";
+// a carousel or a ticker shows the same text again and again: say it twice, then stop
+const SAME_TEXT_TIMES = 2;
+const MAX_UNREAD = 5;
 const MAX_SHOTS = 6;
 const SHOT_EVERY_MS = 700;
 
@@ -25,6 +29,7 @@ function watchInPage(): void {
   w.__qpilotWatching = true;
 
   const NAMED = /toast|snack|notif|alert|flash|message/i;
+  const MAX_TRACKED = 150;
   const tracked: { el: Element; id: number; text: string; at: number; named: boolean; floating: boolean }[] = [];
   let lastInput = 0;
   let nextId = 1;
@@ -47,9 +52,10 @@ function watchInPage(): void {
     const s = getComputedStyle(el);
     return s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) > 0.05;
   };
-  // what makes an added node a message rather than content: it says so itself
-  // (role, aria-live, a telling class), or it floats over the page
-  const kind = (el: Element): { named: boolean; floating: boolean } | null => {
+  // anything that appears may vanish again, but two kinds are told apart: what
+  // calls itself a message (role, aria-live, a telling class) and what floats
+  // over the page. They are kept longer and never pushed out by plain content.
+  const kind = (el: Element): { named: boolean; floating: boolean } => {
     let floating = false;
     let named = false;
     for (let n: Element | null = el, i = 0; n && n !== document.documentElement && i < 6; n = n.parentElement, i++) {
@@ -60,15 +66,22 @@ function watchInPage(): void {
       const pos = getComputedStyle(n).position;
       if (pos === "fixed" || pos === "sticky") floating = true;
     }
-    return named || floating ? { named, floating } : null;
+    return { named, floating };
   };
   const consider = (node: Node) => {
     const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
-    if (!el || tracked.length > 20) return;
+    if (!el) return;
     const text = ((el as HTMLElement).innerText ?? el.textContent ?? "").replace(/\s+/g, " ").trim();
     if (text.length < 3 || text.length > 400) return;
     const k = kind(el);
-    if (!k || !exists(el) || !onScreen(el)) return;
+    if (!exists(el) || !onScreen(el)) return;
+    const plain = !k.named && !k.floating;
+    if (tracked.length >= MAX_TRACKED) {
+      // a page that has just rendered fills the list with content that will stay
+      const oldest = tracked.findIndex((t) => !t.named && !t.floating);
+      if (oldest < 0 || (plain && tracked.length >= MAX_TRACKED + 40)) return;
+      tracked.splice(oldest, 1);
+    }
     const r = el.getBoundingClientRect();
     if (r.width * r.height > innerWidth * innerHeight * 0.35) return; // a page section, not a message
     if (tracked.some((t) => t.text === text || t.el.contains(el) || el.contains(t.el))) return;
@@ -86,13 +99,20 @@ function watchInPage(): void {
     }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     setInterval(() => {
       const now = Date.now();
+      // read once per tick and only if something went away
+      let pageText: string | null = null;
+      const stillThere = (text: string) => {
+        pageText ??= (document.body?.innerText ?? "").replace(/\s+/g, " ");
+        return pageText.includes(text);
+      };
       for (let i = tracked.length - 1; i >= 0; i--) {
         const t = tracked[i];
         const text = ((t.el as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim();
         // sliding off the screen is how a floating message leaves; anything else
         // that is off screen has merely been scrolled away
         if (exists(t.el) && text.length >= 3 && (onScreen(t.el) || !t.floating)) {
-          if (now - t.at > 30000) tracked.splice(i, 1); // it stays: the page tree shows it
+          // it stays: the page tree shows it
+          if (now - t.at > (t.named || t.floating ? 30000 : 12000)) tracked.splice(i, 1);
           continue;
         }
         tracked.splice(i, 1);
@@ -101,7 +121,10 @@ function watchInPage(): void {
         // (one that calls itself an alert is believed even if the agent has moved on)
         const onItsOwn = lastInput < t.at;
         const life = now - t.at;
-        if (life >= 300 && (onItsOwn || (t.named && life <= 8000))) send({ kind: "vanished", id: t.id, text: t.text });
+        if (life < 300 || !(onItsOwn || (t.named && life <= 8000))) continue;
+        // a re-render swaps the node for a new one with the same words: nothing vanished
+        if (stillThere(t.text)) continue;
+        send({ kind: "vanished", id: t.id, text: t.text });
       }
     }, 250);
   };
@@ -112,6 +135,7 @@ function watchInPage(): void {
 /** Watch every page of the run for short-lived messages. Call once, before the first navigation. */
 export async function watchFlashes(ctx: ToolContext): Promise<void> {
   const shots = new Map<number, Buffer>();
+  const told = new Map<string, number>();
   let lastShot = 0;
   await ctx.context.exposeBinding("__qpilotFlash", async ({ page }: { page: Page }, r: Report) => {
     if (!r || typeof r.id !== "number" || typeof r.text !== "string") return;
@@ -128,6 +152,10 @@ export async function watchFlashes(ctx: ToolContext): Promise<void> {
     const text = r.text.slice(0, 300);
     const shot = shots.get(r.id);
     shots.delete(r.id);
+    const times = (told.get(text) ?? 0) + 1;
+    told.set(text, times);
+    if (times > SAME_TEXT_TIMES) return;
+    if (ctx.notices.filter((n) => n.startsWith(FLASH_NOTE)).length >= MAX_UNREAD) return;
     if (shot) ctx.flashShot = shot;
     // the model reads the message as it was; the log gets the masked copy
     ctx.notices.push(`${FLASH_NOTE}: "${text}". It is no longer in the page tree — this is what it said.`);

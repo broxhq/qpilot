@@ -22,7 +22,7 @@ VERDICTS
 - pass only when the expected result is literally in what you received. Otherwise fail. warn = done, but the outcome is unclear.
 - report_step: num from the plan; expected = the step's expected result copied from the test case; evidence = what you saw, quoting the page verbatim, one or two sentences; status last, decided from that evidence. Never write refs (e12) in any text.
 - Every result lists "Changes since the previous page tree" (− was, + is now). Use it for "changed / did not change" checks and quote the changed lines as evidence; "NONE" means the action changed nothing.
-- A message that showed up and vanished by itself (a toast, an alert in the corner) is given to you as "NOTE: A message appeared on the page and vanished…" at the top of a result. It is what the page showed after your action: an error message there means the action failed. Quote it in the evidence.
+- What showed up and vanished by itself (a toast, an alert in the corner, an error line, a "Saved" mark) is given to you as "NOTE: Appeared on the page and vanished on its own: …" at the top of a result. It is what the page showed after your action: an error message there means the action failed. Quote it in the evidence.
 - A failed step does not end the run: go on with the next step. Only a failed precondition ends it.
 - Each step is reported exactly once. A failed step is reported as fail at once — do not try variations to turn it into a pass.
 - A precondition fails (cannot log in, the page does not load) → report step 1 as fail and finish.

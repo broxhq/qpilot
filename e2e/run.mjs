@@ -379,6 +379,8 @@ try {
         (_tree, call) => [call("navigate", { url: site.url + "toast" })],
         (tree, call) => [call("click", { ref: ref(tree, /button "Save"/) })],
         (_tree, call) => [call("wait", { ms: 3000 })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Check"/) })],
+        (_tree, call) => [call("wait", { ms: 3000 })],
         (_tree, call) => [
           call("report_step", { num: 1, expected: "saved", evidence: "Could not save: the limit is exceeded", status: "fail" }),
           call("finish", { status: "failed", summary: "Done." }),
@@ -388,8 +390,11 @@ try {
       { QPILOT_VISION: "0" },
     );
     const results = toolResults(model.requests.at(-1));
-    const waited = results.find((c) => c.includes("vanished on its own")) ?? "";
-    assert.match(waited, /^NOTE: A message appeared on the page and vanished on its own: "Could not save: the limit is exceeded"/, "the vanished toast is handed to the model");
+    const waited = results.find((c) => c.includes("Could not save") && c.includes("vanished on its own")) ?? "";
+    assert.match(waited, /^NOTE: Appeared on the page and vanished on its own: "Could not save: the limit is exceeded"/, "the vanished toast is handed to the model");
+    const plain = results.find((c) => c.includes("This name is taken") && c.includes("vanished on its own")) ?? "";
+    assert.match(plain, /^NOTE: Appeared on the page and vanished on its own: "This name is taken"/, "so is a plain line of the page that came and went");
+    assert.ok(!results.some((c) => /vanished on its own: "Stays here"/.test(c)), "a re-render with the same words is not a vanishing");
     assert.doesNotMatch(waited.split("Page snapshot")[1] ?? "", /Could not save/, "…although the page no longer shows it");
     assert.ok(events.some((e) => e.info?.type === "flash" && e.info.message.includes("Could not save")), "the log has it too");
     assert.ok(run.steps[0].screenshot, "the failed step has a screenshot");
