@@ -1,5 +1,6 @@
 // The agent loop: ask the model, run the tools it calls, repeat until finish.
 
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { cleanupUploads } from "../attachments";
@@ -137,13 +138,36 @@ export async function runAgent(
   // What the browser ends with is what the next run starts with — a sign-in made
   // on this run, or a sign-out. Done once, before the run is shown as finished.
   let persisted = false;
+  const write = async () => {
+    await context
+      ?.storageState({ indexedDB: true })
+      .then((state) => saveSession(state, touched))
+      .catch(() => {});
+  };
   const persist = async () => {
     if (persisted || !context) return;
     persisted = true;
-    await context
-      .storageState({ indexedDB: true })
-      .then((state) => saveSession(state, touched))
-      .catch(() => {});
+    await write();
+  };
+  // A sign-in is kept as soon as it is made, not when the run ends: a run can be
+  // stopped, hang on a question nobody answers, or die with the server, and the
+  // code from the phone would have to be typed again. After every page action
+  // the cookies and the address are compared with what was last written; only a
+  // change is written down.
+  let kept = "";
+  const fingerprint = async (url: string) => {
+    const cookies = await context?.cookies().catch(() => null);
+    if (!cookies) return null;
+    const hash = createHash("sha1");
+    for (const line of cookies.map((c) => `${c.domain}\t${c.path}\t${c.name}\t${c.value}`).sort()) hash.update(line);
+    return `${url}\n${hash.digest("hex")}`;
+  };
+  const checkpoint = async (url: string) => {
+    if (persisted) return;
+    const now = await fingerprint(url);
+    if (now === null || now === kept) return;
+    kept = now;
+    await write();
   };
 
   const wakeLock = spawnWakeLock();
@@ -174,6 +198,8 @@ export async function runAgent(
         if (host) touched.add(host);
       } catch {}
     });
+    // what was loaded is already on disk: not a change to write down
+    kept = (await fingerprint("about:blank")) ?? "";
     if (session && (session.cookies.length || session.origins.length)) {
       pushEvent(runId, { ts: Date.now(), kind: "info", info: { type: "session" } });
     }
@@ -545,6 +571,7 @@ export async function runAgent(
             text: redact(ctx, ret.observation ?? ret.content),
             stepNum,
           });
+          if (PAGE_ACTIONS.has(name)) await checkpoint(ctx.page.url());
           if (ret.finished) finished = true;
           if (name === "report_step" && ret.content.startsWith("Error")) verdictRefused = true;
           if (name === "navigate" || name === "ask_user") progressedThisTurn = true;

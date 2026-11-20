@@ -54,7 +54,7 @@ async function waitFor(url, attempts = 60) {
 }
 
 /** Follows the run's event stream to the end; returns the final run and all events. */
-async function follow(base, id) {
+async function follow(base, id, leaveWhenWaiting = false) {
   const res = await fetch(`${base}/api/run/${id}/stream`);
   const events = [];
   let run;
@@ -70,6 +70,7 @@ async function follow(base, id) {
       events.push(...(data.events ?? []), ...(data.event ? [data.event] : []));
     }
     if (run && !["running", "waiting", "paused"].includes(run.status)) break;
+    if (run?.status === "waiting" && leaveWhenWaiting) break;
   }
   return { run, events };
 }
@@ -80,8 +81,10 @@ async function follow(base, id) {
  * second-opinion questions (see model.mjs). `home` keeps the settings directory
  * from one run to the next (it is then the caller's to remove); `probe(base)`
  * is called while the server is still up, and what it returns comes back as `probed`.
+ * `abandon` leaves the run as soon as it asks the user something: the server is
+ * then killed with the run still going.
  */
-async function runWith(script, testCase, env = {}, review, { home: kept, probe } = {}) {
+async function runWith(script, testCase, env = {}, review, { home: kept, probe, abandon } = {}) {
   const model = await startModel(script, { review });
   const home = kept ?? mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", baseURL: model.url, apiKey: "e2e-key-0000000000", model: "scripted" }));
@@ -99,7 +102,7 @@ async function runWith(script, testCase, env = {}, review, { home: kept, probe }
       body: JSON.stringify({ testCase }),
     });
     assert.equal(started.status, 200, "the run starts");
-    const { run, events } = await follow(base, (await started.json()).id);
+    const { run, events } = await follow(base, (await started.json()).id, abandon);
     assert.ok(!/^(Script error|The script ran out)/.test(run.summary ?? ""), run.summary);
     // fetched now: the server is gone once this function returns
     const shots = {};
@@ -112,7 +115,8 @@ async function runWith(script, testCase, env = {}, review, { home: kept, probe }
   } finally {
     // the server may still be writing into its directory: wait until it is gone
     const gone = once(app, "exit");
-    app.kill();
+    // SIGKILL when the run is abandoned: the server gets no chance to tidy up
+    app.kill(abandon ? "SIGKILL" : undefined);
     await gone;
     model.close();
     if (!kept) rmSync(home, { recursive: true, force: true });
@@ -566,10 +570,26 @@ try {
         text, { QPILOT_VISION: "0", QPILOT_SESSIONS: "0" }, undefined, { home },
       );
       assert.ok(!existsSync(file), "with QPILOT_SESSIONS=0 a run leaves nothing behind");
+
+      // a run that never ends — it asks something and the server is killed — has kept its sign-in all the same
+      const signIn = (tree, call) => [
+        call("fill", { ref: ref(tree, /textbox "Code"/), value: "1234", name: "Code" }),
+        call("click", { ref: ref(tree, /button "Sign in"/), name: "Sign in" }),
+      ];
+      const before = logins();
+      const cut = await runWith(
+        [plan, open, signIn, (_tree, call) => [call("ask_user", { prompt: "What next?" })]],
+        text, { QPILOT_VISION: "0" }, undefined, { home, abandon: true },
+      );
+      assert.equal(cut.run.status, "waiting", "the run was left waiting for an answer and killed");
+      assert.ok(JSON.parse(readFileSync(file, "utf-8")).cookies.some((c) => c.name === "sid"), "the sign-in was written down the moment it was made, not at the end of the run");
+      const after = await runWith([plan, open, done], text, { QPILOT_VISION: "0" }, undefined, { home });
+      assert.match(toolResults(after.model.requests.at(-1)).find((c) => c.startsWith("OK: navigated")), /heading "Welcome, tester"/, "…and the next run is signed in");
+      assert.equal(logins(), before + 1, "one sign-in for the two runs");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
-    console.log("✓ a sign-in is kept between runs, cleared on request, and never kept when turned off");
+    console.log("✓ a sign-in is kept between runs — even from a run that never finished — cleared on request, and never kept when turned off");
   }
 } catch (err) {
   failed = true;
