@@ -66,7 +66,8 @@ function openPanel() {
 </script></body></html>`;
 
 // Saving fails, and the only sign of it is a toast with no role and a hashed
-// class that is gone in a second and a half.
+// class, built the way a real one is: put into the page transparent and with
+// no height, shown half a second later, faded out and only then removed.
 const toast = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Toast</title></head><body>
 <h1>Form</h1><button onclick="save()">Save</button> <button onclick="check()">Check</button>
 <ul id="list"><li>Stays here</li></ul>
@@ -83,10 +84,12 @@ function check() {
 }
 function save() {
   const box = document.createElement("div");
-  box.style.cssText = "position:fixed;top:20px;right:20px;width:320px";
+  box.style.cssText = "position:fixed;top:20px;right:20px;width:320px;height:0;overflow:hidden;opacity:0";
   box.innerHTML = '<div class="x9f2k"><p>Could not save: the limit is exceeded</p></div>';
   document.body.appendChild(box);
-  setTimeout(() => box.remove(), 1500);
+  setTimeout(() => { box.style.height = "auto"; box.style.opacity = "1"; }, 500);
+  setTimeout(() => { box.style.opacity = "0"; }, 2000);
+  setTimeout(() => box.remove(), 2500);
 }
 </script></body></html>`;
 

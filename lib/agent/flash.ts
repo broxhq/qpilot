@@ -24,18 +24,40 @@ type Report = { kind: "appeared" | "vanished"; id: number; text: string };
 
 /** Runs in every frame of the page before its own scripts. */
 function watchInPage(): void {
-  const w = window as unknown as { __qpilotFlash?: (r: Report) => void; __qpilotWatching?: boolean };
+  const w = window as unknown as {
+    __qpilotFlash?: (r: Report) => void;
+    __qpilotWatching?: boolean;
+    __qpilotPending?: () => number;
+  };
   if (w.__qpilotWatching) return;
   w.__qpilotWatching = true;
 
   const NAMED = /toast|snack|notif|alert|flash|message/i;
   const MAX_TRACKED = 150;
   const tracked: { el: Element; id: number; text: string; at: number; named: boolean; floating: boolean }[] = [];
+  // inserted but not shown yet: a toast is put into the page transparent and
+  // with no height, and fades in half a second later
+  const pending: { node: Node; at: number }[] = [];
+  const PENDING_MS = 1500;
+  w.__qpilotPending = () => pending.length;
   let lastInput = 0;
   let nextId = 1;
-  for (const type of ["pointerdown", "keydown", "wheel", "mousemove"]) {
+  for (const type of ["pointerdown", "keydown", "wheel"]) {
     window.addEventListener(type, () => (lastInput = Date.now()), { capture: true, passive: true });
   }
+  // the browser sends a mousemove of its own when the layout changes under a
+  // still pointer: only a move to another point is somebody's hand
+  let mx = -1;
+  let my = -1;
+  window.addEventListener(
+    "mousemove",
+    (e) => {
+      if (e.clientX !== mx || e.clientY !== my) lastInput = Date.now();
+      mx = e.clientX;
+      my = e.clientY;
+    },
+    { capture: true, passive: true },
+  );
   const send = (r: Report) => {
     try {
       w.__qpilotFlash?.(r);
@@ -68,13 +90,19 @@ function watchInPage(): void {
     }
     return { named, floating };
   };
-  const consider = (node: Node) => {
+  const consider = (node: Node, again = false) => {
     const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
-    if (!el) return;
+    if (!el || !el.isConnected) return;
     const text = ((el as HTMLElement).innerText ?? el.textContent ?? "").replace(/\s+/g, " ").trim();
     if (text.length < 3 || text.length > 400) return;
     const k = kind(el);
-    if (!exists(el) || !onScreen(el)) return;
+    if (!exists(el) || !onScreen(el)) {
+      // looked at again on the next ticks; plain content that is not visible
+      // (a closed accordion, a tab that is not selected) is not waited for
+      if (!again && (k.named || k.floating) && pending.length < 40) pending.push({ node, at: Date.now() });
+      return;
+    }
+    if (again) pending.splice(pending.findIndex((p) => p.node === node), 1);
     const plain = !k.named && !k.floating;
     if (tracked.length >= MAX_TRACKED) {
       // a page that has just rendered fills the list with content that will stay
@@ -101,10 +129,17 @@ function watchInPage(): void {
       const now = Date.now();
       // read once per tick and only if something went away
       let pageText: string | null = null;
-      const stillThere = (text: string) => {
+      // the node itself may still be in the page, faded out and waiting to be
+      // removed: its own copy of the words does not count
+      const stillThere = (text: string, own: number) => {
         pageText ??= (document.body?.innerText ?? "").replace(/\s+/g, " ");
-        return pageText.includes(text);
+        return pageText.split(text).length - 1 > own;
       };
+      for (const p of [...pending]) {
+        consider(p.node, true);
+        const i = pending.indexOf(p);
+        if (i >= 0 && now - p.at > PENDING_MS) pending.splice(i, 1);
+      }
       for (let i = tracked.length - 1; i >= 0; i--) {
         const t = tracked[i];
         const text = ((t.el as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim();
@@ -123,7 +158,8 @@ function watchInPage(): void {
         const life = now - t.at;
         if (life < 300 || !(onItsOwn || (t.named && life <= 8000))) continue;
         // a re-render swaps the node for a new one with the same words: nothing vanished
-        if (stillThere(t.text)) continue;
+        const own = t.el.isConnected && ((t.el as HTMLElement).innerText ?? "").includes(t.text) ? 1 : 0;
+        if (stillThere(t.text, own)) continue;
         send({ kind: "vanished", id: t.id, text: t.text });
       }
     }, 250);

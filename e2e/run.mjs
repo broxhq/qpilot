@@ -390,6 +390,8 @@ try {
       { QPILOT_VISION: "0" },
     );
     const results = toolResults(model.requests.at(-1));
+    const saved = results.find((c) => c.startsWith("OK: clicked") && c.includes("Could not save")) ?? "";
+    assert.match(saved.split("Page snapshot")[1] ?? "", /Could not save: the limit is exceeded/, "the page is read once the toast has faded in, not while it is still transparent");
     const waited = results.find((c) => c.includes("Could not save") && c.includes("vanished on its own")) ?? "";
     assert.match(waited, /^NOTE: Appeared on the page and vanished on its own: "Could not save: the limit is exceeded"/, "the vanished toast is handed to the model");
     const plain = results.find((c) => c.includes("This name is taken") && c.includes("vanished on its own")) ?? "";

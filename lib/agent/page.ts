@@ -93,6 +93,23 @@ export function wirePage(ctx: ToolContext, page: Page): void {
   });
 }
 
+/**
+ * Something has just been put into the page and is not visible yet (a toast
+ * fading in): give it a moment, so that the page is read with it on screen.
+ * On the real case the tree was taken 0.3 s after the response, the toast
+ * became visible at 0.5 s, and the model was told "nothing changed".
+ */
+async function waitForAppearing(page: Page, maxMs = 1000): Promise<void> {
+  const until = Date.now() + maxMs;
+  while (Date.now() < until) {
+    const waiting = await page
+      .evaluate(() => (window as unknown as { __qpilotPending?: () => number }).__qpilotPending?.() ?? 0)
+      .catch(() => 0);
+    if (!waiting) return;
+    await page.waitForTimeout(120);
+  }
+}
+
 // Return a fresh snapshot in the SAME result as the action — this removes the
 // separate snapshot call after every action and roughly halves iterations per
 // step. Only the short observation goes to events/SSE; the tree goes to the model.
@@ -108,6 +125,7 @@ export async function actionResult(ctx: ToolContext, msg: string): Promise<ToolR
     return { content: `${msg}\n(the page tree comes with the last action of this turn)`, observation: msg };
   }
   await ctx.net.waitForQuiet(ctx.actionStarted, 4000);
+  await waitForAppearing(ctx.page);
   const read = await readPage(ctx.page).catch(() => null);
   const tree = read?.view ?? "";
   const tabs = tabsLine(ctx);
