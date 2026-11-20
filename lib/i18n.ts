@@ -46,6 +46,7 @@ export interface Dict {
   infoNewTab: string;
   infoTabClosed: string;
   infoDialog: string;
+  infoFlash: string;
   infoAccepted: string;
   infoDismissed: string;
   statsModel: string;
@@ -202,6 +203,7 @@ const en: Dict = {
   infoNewTab: "A new tab opened",
   infoTabClosed: "The tab was closed, back to",
   infoDialog: "Browser dialog",
+  infoFlash: "A message appeared and vanished",
   infoAccepted: "OK pressed",
   infoDismissed: "Cancel pressed",
   statsModel: "model",
@@ -372,6 +374,7 @@ const ru: Dict = {
   infoNewTab: "Открылась новая вкладка",
   infoTabClosed: "Вкладка закрыта, возврат на",
   infoDialog: "Диалог браузера",
+  infoFlash: "Сообщение появилось и исчезло",
   infoAccepted: "нажато OK",
   infoDismissed: "нажата «Отмена»",
   statsModel: "модель",

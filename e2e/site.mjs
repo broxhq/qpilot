@@ -65,6 +65,20 @@ function openPanel() {
 }
 </script></body></html>`;
 
+// Saving fails, and the only sign of it is a toast with no role and a hashed
+// class that is gone in a second and a half.
+const toast = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Toast</title></head><body>
+<h1>Form</h1><button onclick="save()">Save</button>
+<script>
+function save() {
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;top:20px;right:20px;width:320px";
+  box.innerHTML = '<div class="x9f2k"><p>Could not save: the limit is exceeded</p></div>';
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 1500);
+}
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -79,7 +93,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

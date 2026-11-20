@@ -93,7 +93,9 @@ function renderLog(e: RunEvent, t: Dict): { icon: string; text: string; cls: str
       const i = e.info;
       const text = !i
         ? (e.text ?? "")
-        : i.type === "dialog"
+        : i.type === "flash"
+          ? `${t.infoFlash}: «${i.message}»`
+          : i.type === "dialog"
           ? `${t.infoDialog} (${i.dialog}): «${i.message}» — ${i.accepted ? t.infoAccepted : t.infoDismissed}`
           : `${i.type === "newTab" ? t.infoNewTab : t.infoTabClosed}: ${i.url}`;
       return { icon: "•", text, cls: "text-warning/90" };

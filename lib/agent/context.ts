@@ -33,6 +33,8 @@ export interface ToolContext {
   dialogPolicy: { action: "accept" | "dismiss"; text?: string } | null;
   /** Things that happened on their own (dialog, new tab) — prepended to the next tool result. */
   notices: string[];
+  /** The page at the moment a short-lived message was on it — the evidence for the step if it fails. */
+  flashShot: Buffer | null;
   /** Values typed into password fields or given as secret answers — masked in everything the UI shows. */
   secrets: Set<string>;
 }

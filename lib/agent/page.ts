@@ -23,9 +23,10 @@ export async function locate(
 }
 
 /** Events that aren't tied to a tool call (a dialog, a new tab) — visible in the step log. */
-export function note(ctx: ToolContext, text: string, info: NonNullable<RunEvent["info"]>): void {
-  ctx.notices.push(text);
-  pushEvent(ctx.runId, { ts: Date.now(), kind: "info", text, info, stepNum: ctx.step.current });
+export function note(ctx: ToolContext, text: string | null, info: NonNullable<RunEvent["info"]>): void {
+  // null: the caller has put its own wording for the model into ctx.notices
+  if (text !== null) ctx.notices.push(text);
+  pushEvent(ctx.runId, { ts: Date.now(), kind: "info", text: text ?? undefined, info, stepNum: ctx.step.current });
 }
 
 export function tabsLine(ctx: ToolContext): string {

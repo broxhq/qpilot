@@ -370,6 +370,31 @@ try {
     assert.doesNotMatch(near, /Old notice 1/, "…not its namesake down the page");
     console.log("✓ a page bigger than the budget shows what is on screen first");
   }
+
+  // ── 8. a toast that is gone before the next look is still reported ──────────
+  {
+    const { run, events, model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Save — saved"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "toast" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Save"/) })],
+        (_tree, call) => [call("wait", { ms: 3000 })],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "saved", evidence: "Could not save: the limit is exceeded", status: "fail" }),
+          call("finish", { status: "failed", summary: "Done." }),
+        ],
+      ],
+      "Toast\n1. Save.",
+      { QPILOT_VISION: "0" },
+    );
+    const results = toolResults(model.requests.at(-1));
+    const waited = results.find((c) => c.includes("vanished on its own")) ?? "";
+    assert.match(waited, /^NOTE: A message appeared on the page and vanished on its own: "Could not save: the limit is exceeded"/, "the vanished toast is handed to the model");
+    assert.doesNotMatch(waited.split("Page snapshot")[1] ?? "", /Could not save/, "…although the page no longer shows it");
+    assert.ok(events.some((e) => e.info?.type === "flash" && e.info.message.includes("Could not save")), "the log has it too");
+    assert.ok(run.steps[0].screenshot, "the failed step has a screenshot");
+    console.log("✓ a message that vanished before the next look is reported");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);

@@ -12,6 +12,7 @@ import { type ToolContext } from "./context";
 import { PAGE_ACTIONS, executeTool } from "./handlers";
 import { callModel, compactHistory, dropScreenshots } from "./model";
 import { captureEvidence, wirePage, withNotices } from "./page";
+import { watchFlashes } from "./flash";
 import { NUDGE } from "./prompt";
 import { isSecretField, redact, redactDeep, stripRefs } from "./redact";
 import { Reviewer } from "./reviewer";
@@ -142,8 +143,10 @@ export async function runAgent(
       actionStarted: Date.now(),
       dialogPolicy: null,
       notices: [],
+      flashShot: null,
       secrets: new Set(),
     };
+    await watchFlashes(ctx);
     wirePage(ctx, page);
     const thisRun = getRun(runId);
     if (thisRun) thisRun.vision = ctx.vision;

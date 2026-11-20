@@ -67,6 +67,7 @@ export interface RunEvent {
   /** For kind "info": what happened on its own, so the UI can say it in the run's language. */
   info?:
     | { type: "newTab" | "tabClosed"; url: string }
+    | { type: "flash"; message: string }
     | { type: "dialog"; dialog: string; message: string; accepted: boolean };
 }
 

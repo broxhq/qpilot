@@ -4,6 +4,7 @@ import { askQuestion, getRun, pushEvent, saveScreenshot, setPlan } from "../../s
 import { type PlanGroup } from "../../types";
 import { type ReportStatus } from "../context";
 import { captureEvidence } from "../page";
+import { FLASH_NOTE } from "../flash";
 import { redact, stripRefs } from "../redact";
 import { type ToolDef } from "../tool";
 
@@ -173,10 +174,21 @@ export const planTools: ToolDef[] = [
           content: `Error: step ${num} is already reported as ${planned.status} — each step is reported exactly once. ${next ? `Go on with step ${next.num}: "${next.description}".` : "All steps are reported — call finish."}`,
         };
       }
+      // a toast that came and went after the model's last look: the verdict was
+      // written without it. The note itself is put in front of this answer.
+      if (ctx.notices.some((n) => n.startsWith(FLASH_NOTE))) {
+        return {
+          content:
+            "Error: not recorded. A message appeared on the page and vanished after your last look — it is in the NOTE above. Take it into account and call report_step again.",
+        };
+      }
       // JPEG goes to the store and is served via a separate GET — never inlined in events/SSE
       let screenshot: string | undefined;
+      const flashShot = ctx.flashShot;
+      ctx.flashShot = null;
       if (status === "fail" || status === "warn") {
-        const buf = await captureEvidence(page);
+        // the page with the message still on it says more than the page after it
+        const buf = flashShot ?? (await captureEvidence(page));
         if (buf) {
           saveScreenshot(runId, num, buf);
           screenshot = `/api/run/${runId}/shot/${num}`;
