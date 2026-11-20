@@ -22,6 +22,7 @@ const ORDER = [
   "hover_at",
   "press",
   "dismiss",
+  "clear_session",
   "wait_for",
   "wait",
   "scroll_to",

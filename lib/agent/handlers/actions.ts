@@ -305,6 +305,33 @@ export const actionsTools: ToolDef[] = [
 
   {
     schema: {
+      name: "clear_session",
+      description:
+        "Sign out of everything: forget the cookies and saved data of every site in this browser and reload the page. For a test case that itself checks signing in, or needs a signed-out browser.",
+      input_schema: { type: "object", properties: {} },
+    },
+    page: true,
+    run: async (input, ctx) => {
+      const { page, context } = ctx;
+      await context.clearCookies();
+      // storage belongs to the origin a page is on: clear it in every open tab
+      for (const p of context.pages()) {
+        await p
+          .evaluate(async () => {
+            localStorage.clear();
+            sessionStorage.clear();
+            const dbs = (await indexedDB.databases?.()) ?? [];
+            for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
+          })
+          .catch(() => {});
+      }
+      await page.reload({ timeout: 60000 }).catch(() => {});
+      return actionResult(ctx, "OK: signed out — cookies and saved site data are cleared, the page is reloaded");
+    },
+  },
+
+  {
+    schema: {
       name: "wait_for",
       description:
         "Wait until a text appears (or, with gone=true, disappears) — for slow pages that still show the old state or a loader. Returns as soon as it happens, with the page tree.",

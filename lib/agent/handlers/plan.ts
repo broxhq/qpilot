@@ -270,6 +270,8 @@ export const planTools: ToolDef[] = [
       const status = (input.status as string) === "passed" ? "passed" : "failed";
       // second opinions still on their way can change a step — wait before closing the run
       await ctx.reviewer.settle();
+      // the sign-ins are on disk by the time the run is shown as finished
+      await ctx.persist();
       pushEvent(runId, {
         ts: Date.now(),
         kind: "done",

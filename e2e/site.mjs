@@ -126,6 +126,20 @@ function show(c) { document.getElementById("panel").textContent = c + " — " + 
 // press of Save is bound to do nothing; what matters is what the agent does next.
 const unmarked = form.replace('<label for="title">Title *</label> <input id="title">', '<label for="title">Title</label> <input id="title" aria-required="true">');
 
+// A site behind a sign-in. The session lives in a cookie without an expiry date
+// (a browser profile would drop it on restart) and a token in localStorage.
+const signIn = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head><body>
+<h1>Sign in</h1>
+<form method="post" action="/login"><label>Code <input name="code"></label> <button>Sign in</button></form>
+</body></html>`;
+const account = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Account</title></head><body>
+<h1>Welcome, tester</h1><p id="token"></p>
+<script>
+const had = !!localStorage.getItem("token");
+if (!had) localStorage.setItem("token", "t-" + Date.now());
+document.getElementById("token").textContent = "token from an earlier visit: " + (had ? "yes" : "no");
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -133,6 +147,20 @@ export function startSite() {
     if (req.url.startsWith("/seen?")) {
       seen.push(decodeURIComponent(req.url.slice(6)));
       return res.end("ok");
+    }
+    if (req.url === "/login" && req.method === "POST") {
+      seen.push("login");
+      res.writeHead(303, { "set-cookie": "sid=abc123; Path=/; HttpOnly", location: "/account" });
+      return res.end();
+    }
+    if (req.url === "/account" || req.url === "/login") {
+      const signedIn = /(^|;\s*)sid=abc123/.test(req.headers.cookie ?? "");
+      if (req.url === "/account" && !signedIn) {
+        res.writeHead(302, { location: "/login" });
+        return res.end();
+      }
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(req.url === "/account" ? account : signIn);
     }
     if (req.url === "/api/save") {
       seen.push("save");

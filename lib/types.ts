@@ -68,6 +68,7 @@ export interface RunEvent {
   info?:
     | { type: "newTab" | "tabClosed"; url: string }
     | { type: "flash"; message: string }
+    | { type: "session" }
     | { type: "dialog"; dialog: string; message: string; accepted: boolean };
 }
 

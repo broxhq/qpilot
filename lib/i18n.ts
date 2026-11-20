@@ -48,6 +48,7 @@ export interface Dict {
   infoTabClosed: string;
   infoDialog: string;
   infoFlash: string;
+  infoSession: string;
   infoAccepted: string;
   infoDismissed: string;
   statsModel: string;
@@ -132,6 +133,12 @@ export interface Dict {
     storedIn: string;
     welcome: string;
     welcomeSub: string;
+    sessions: string;
+    sessionsHint: string;
+    sessionsNone: string;
+    sessionsFor: string;
+    sessionsForget: string;
+    sessionsOff: string;
   };
   action: {
     opening: string;
@@ -152,6 +159,7 @@ export interface Dict {
     inside: string;
     pressing: string;
     closingOverlay: string;
+    clearingSession: string;
     waiting: string;
     askingUser: string;
     uploading: string;
@@ -206,6 +214,7 @@ const en: Dict = {
   infoTabClosed: "The tab was closed, back to",
   infoDialog: "Browser dialog",
   infoFlash: "A message appeared and vanished",
+  infoSession: "Started with the sign-ins saved from earlier runs",
   infoAccepted: "OK pressed",
   infoDismissed: "Cancel pressed",
   statsModel: "model",
@@ -304,6 +313,12 @@ const en: Dict = {
     storedIn: "Stored in {path}",
     welcome: "Connect a model to get started",
     welcomeSub: "qpilot drives the browser with an AI model. Add your API key below — you can change it here any time.",
+    sessions: "Saved sign-ins",
+    sessionsHint: "When a run ends, the cookies and site data of its browser are kept, and the next run starts already signed in — like your own browser. They are stored in {path}, readable only by you, and are never sent to the model.",
+    sessionsNone: "Nothing is saved yet.",
+    sessionsFor: "Saved for {n} site(s): {sites}",
+    sessionsForget: "Forget all",
+    sessionsOff: "Turned off by QPILOT_SESSIONS=0: every run starts signed out.",
   },
   action: {
     opening: "Opening",
@@ -324,6 +339,7 @@ const en: Dict = {
     inside: "inside",
     pressing: "Pressing",
     closingOverlay: "Closing overlay",
+    clearingSession: "Signing out: clearing the saved sign-ins",
     waiting: "Waiting",
     askingUser: "Asking user",
     uploading: "Uploading",
@@ -378,6 +394,7 @@ const ru: Dict = {
   infoTabClosed: "Вкладка закрыта, возврат на",
   infoDialog: "Диалог браузера",
   infoFlash: "Сообщение появилось и исчезло",
+  infoSession: "Запуск с входами, сохранёнными с прошлых прогонов",
   infoAccepted: "нажато OK",
   infoDismissed: "нажата «Отмена»",
   statsModel: "модель",
@@ -476,6 +493,12 @@ const ru: Dict = {
     storedIn: "Хранится в {path}",
     welcome: "Подключите модель, чтобы начать",
     welcomeSub: "qpilot управляет браузером с помощью ИИ-модели. Укажите API-ключ ниже — поменять его можно здесь в любой момент.",
+    sessions: "Сохранённые входы",
+    sessionsHint: "Когда прогон заканчивается, cookies и данные сайтов из его браузера сохраняются, и следующий прогон начинается уже с выполненным входом — как в вашем браузере. Они лежат в {path}, доступны только вам и никогда не уходят в модель.",
+    sessionsNone: "Пока ничего не сохранено.",
+    sessionsFor: "Сохранено для сайтов ({n}): {sites}",
+    sessionsForget: "Забыть все",
+    sessionsOff: "Выключено переменной QPILOT_SESSIONS=0: каждый прогон начинается без входа.",
   },
   action: {
     opening: "Открывает",
@@ -496,6 +519,7 @@ const ru: Dict = {
     inside: "внутри",
     pressing: "Нажимает",
     closingOverlay: "Закрывает оверлей",
+    clearingSession: "Выход: очистка сохранённых входов",
     waiting: "Ждёт",
     askingUser: "Спрашивает пользователя",
     uploading: "Загружает",

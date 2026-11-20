@@ -1,11 +1,12 @@
 // The agent loop: ask the model, run the tools it calls, repeat until finish.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type BrowserContext } from "playwright";
 import { cleanupUploads } from "../attachments";
 import { dict } from "../i18n";
 import { addStats, checkPause, getFiles, getRun, pushEvent, saveScreenshot } from "../store";
 import { NetworkMonitor } from "../network";
+import { loadSession, saveSession } from "../sessions";
 import { snapshot } from "./snapshot";
 import { MODEL_TIMEOUT_MS, resolveProvider } from "../provider";
 import { type ToolContext } from "./context";
@@ -130,6 +131,20 @@ export async function runAgent(
   headless = true,
 ): Promise<void> {
   let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
+  // the sites this run talked to: only their sign-ins are rewritten when it ends
+  const touched = new Set<string>();
+  // What the browser ends with is what the next run starts with — a sign-in made
+  // on this run, or a sign-out. Done once, before the run is shown as finished.
+  let persisted = false;
+  const persist = async () => {
+    if (persisted || !context) return;
+    persisted = true;
+    await context
+      .storageState({ indexedDB: true })
+      .then((state) => saveSession(state, touched))
+      .catch(() => {});
+  };
 
   const wakeLock = spawnWakeLock();
 
@@ -144,20 +159,33 @@ export async function runAgent(
       channel: "chrome",
       headless,
     });
-    const context = await browser.newContext({
+    // sign-ins of earlier runs: without them every run starts at a login form
+    const session = loadSession();
+    context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       // Dev/staging/corp environments routinely use self-signed or internal-CA
       // certs; skip the browser's SSL warning page so navigate just works.
       ignoreHTTPSErrors: true,
+      ...(session ? { storageState: session } : {}),
     });
+    context.on("request", (req) => {
+      try {
+        const host = new URL(req.url()).hostname.toLowerCase();
+        if (host) touched.add(host);
+      } catch {}
+    });
+    if (session && (session.cookies.length || session.origins.length)) {
+      pushEvent(runId, { ts: Date.now(), kind: "info", info: { type: "session" } });
+    }
     const page = await context.newPage();
+    const browserContext = context;
 
     const files = getFiles(runId);
     const ctx: ToolContext = {
       runId,
       page,
-      context,
-      net: new NetworkMonitor(context),
+      context: browserContext,
+      net: new NetworkMonitor(browserContext),
       reviewer: new Reviewer(cfg, client, testCase),
       step: { current: 1 },
       files,
@@ -171,6 +199,7 @@ export async function runAgent(
       dialogPolicy: null,
       notices: [],
       flashShot: null,
+      persist,
       secrets: new Set(),
     };
     await watchFlashes(ctx);
@@ -179,7 +208,7 @@ export async function runAgent(
     if (thisRun) thisRun.vision = ctx.vision;
     // tabs the page opens itself (target=_blank, window.open): the agent is moved
     // to the newest one when the action that opened it returns — see adoptNewTab
-    context.on("page", (opened) => {
+    browserContext.on("page", (opened) => {
       wirePage(ctx, opened);
       ctx.incoming = opened;
     });
@@ -196,6 +225,12 @@ export async function runAgent(
         files.map((f) => `- ${f.name} (${Math.max(1, Math.round(f.size / 1024))} KB)`).join("\n")
       : "";
 
+    // said only when it is so: a model told about a saved sign-in that is not
+    // there would skip a login it has to do
+    const sessionNote = session
+      ? "\n\nSign-ins saved from earlier runs are loaded into the browser, so a site may open already signed in. If it does, the login precondition is done: do not ask for a login or a code unless the page shows a sign-in form. If the test case itself checks signing in, call clear_session before you start."
+      : "";
+
     const messages: Anthropic.MessageParam[] = [
       {
         role: "user",
@@ -204,6 +239,7 @@ export async function runAgent(
           testCase +
           "\n```" +
           attachmentNote +
+          sessionNote +
           "\n\n" +
           languageNote,
       },
@@ -603,6 +639,8 @@ export async function runAgent(
     const message = err instanceof Error ? err.message : String(err);
     pushEvent(runId, { ts: Date.now(), kind: "error", text: message });
   } finally {
+    // a run that did not end through finish (stopped, crashed) keeps its sign-ins too
+    await persist();
     await browser?.close().catch(() => {});
     wakeLock?.kill();
     // uploaded files only exist for the duration of the run

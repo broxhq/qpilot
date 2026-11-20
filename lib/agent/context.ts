@@ -37,6 +37,8 @@ export interface ToolContext {
   notices: string[];
   /** The page at the moment a short-lived message was on it — the evidence for the step if it fails. */
   flashShot: Buffer | null;
+  /** Writes the browser's sign-ins down for the next run. Called before the run is announced as finished. */
+  persist: () => Promise<void>;
   /** Values typed into password fields or given as secret answers — masked in everything the UI shows. */
   secrets: Set<string>;
 }

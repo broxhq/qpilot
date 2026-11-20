@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Check, CircleAlert, Cpu, Loader2, Palette, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, CircleAlert, Cpu, KeyRound, Loader2, Palette, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -53,6 +53,7 @@ function SettingsForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  const [sessions, setSessions] = useState<{ enabled: boolean; path: string; sites: string[] } | null>(null);
 
   useEffect(() => {
     if (navigator.language?.toLowerCase().startsWith("ru")) setLang("ru");
@@ -62,6 +63,7 @@ function SettingsForm() {
       setBaseURL(s.baseURL);
       setModel(s.model);
     }).catch(() => {});
+    fetch("/api/sessions").then((r) => (r.ok ? r.json() : null)).then((d) => d && setSessions(d)).catch(() => {});
   }, []);
 
   // the saved key counts only for the provider and base URL it was saved
@@ -206,6 +208,31 @@ function SettingsForm() {
           </Button>
         </div>
       </form>
+
+      <section className={cn(CARD, "mb-6")}>
+        <SectionHead icon={<KeyRound className="size-4" />} title={t.sessions} />
+        <div className="space-y-3 px-5 pb-5">
+          <p className={HINT}>{t.sessionsHint.replace("{path}", sessions?.path ?? "~/.qpilot/session.json")}</p>
+          {sessions && !sessions.enabled && <p className="text-xs leading-relaxed text-warning">{t.sessionsOff}</p>}
+          {sessions?.enabled && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                {sessions.sites.length === 0
+                  ? t.sessionsNone
+                  : t.sessionsFor
+                      .replace("{n}", String(sessions.sites.length))
+                      .replace("{sites}", sessions.sites.slice(0, 12).join(", ") + (sessions.sites.length > 12 ? " …" : ""))}
+              </span>
+              <Button type="button" variant="outline" size="sm" disabled={sessions.sites.length === 0}
+                onClick={() => {
+                  fetch("/api/sessions", { method: "DELETE" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setSessions(d)).catch(() => {});
+                }}>
+                {t.sessionsForget}
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
 
       <section className={CARD}>
         <SectionHead icon={<Palette className="size-4" />} title={t.appearance} />

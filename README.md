@@ -70,7 +70,8 @@ deliberately altered it flagged 12.
    accessibility tree on every action, so nothing is stored that can go stale after
    a redesign.
 3. Results stream in live, step by step.
-4. Hits an OTP or a captcha? It pauses and asks you, then carries on.
+4. Hits an OTP or a captcha? It pauses and asks you, then carries on. You sign in
+   once: the next run starts already signed in.
 
 If the model can see images, the agent also looks at the page when text is not
 enough: an icon with no label, a picture, a chart, a canvas. Nothing to switch on —
@@ -190,6 +191,26 @@ can upload them, but never sees what is inside them.
 **Choose folder** points qpilot at a directory of `.md` files. Tick the ones you
 want and run them as a batch — one after another, with live status and timing, and
 a **Stop** button. Finished runs land under **Recent runs**.
+
+</details>
+
+<details>
+<summary><b>Sign in once</b> — the next run starts where this one ended</summary>
+
+<br>
+
+Every run opens a fresh browser, but not a signed-out one. When a run ends, the
+cookies and site data of its browser are kept, and the next run starts with them —
+the way your own browser remembers you. A login with a code from your phone is
+done once, not before every test case.
+
+- A test case that itself checks signing in starts from a clean browser: the agent
+  signs out first.
+- **Settings → Saved sign-ins** shows which sites something is kept for and forgets
+  it all in one click.
+- The file is `~/.qpilot/session.json`, readable only by you. It holds session
+  tokens — the same thing a browser profile holds — so treat it like one. It never
+  goes to the model. `QPILOT_SESSIONS=0` turns the feature off.
 
 </details>
 

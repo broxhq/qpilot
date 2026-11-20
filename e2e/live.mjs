@@ -115,7 +115,8 @@ for (const n of names) if (!CASES[n]) throw new Error(`No case "${n}". There are
 const site = await startSite();
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
-const app = spawn("node", [SERVER], { env: { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1" }, stdio: ["ignore", "ignore", "inherit"] });
+// these pages need no sign-in, and a test site must not end up among your saved sign-ins
+const app = spawn("node", [SERVER], { env: { QPILOT_SESSIONS: "0", ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1" }, stdio: ["ignore", "ignore", "inherit"] });
 let wrong = 0;
 try {
   await waitFor(`${base}/api/runs`);

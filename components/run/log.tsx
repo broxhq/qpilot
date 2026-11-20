@@ -45,6 +45,7 @@ function describeAction(name?: string, input?: unknown, t: Dict = dict("en")): s
     case "press":    return `${a.pressing} ${p.key ?? ""}`;
     case "upload_file": return `${a.uploading} "${p.file ?? ""}"${p.name ? ` ${a.to} "${p.name}"` : ""}`;
     case "dismiss":  return a.closingOverlay;
+    case "clear_session": return a.clearingSession;
     case "wait":     return `${a.waiting} ${p.ms ?? ""} ms`;
     case "ask_user": return a.askingUser;
     case "wait_for": return `${p.gone ? a.waitingGone : a.waitingFor} "${p.text ?? ""}"`;
@@ -93,7 +94,9 @@ function renderLog(e: RunEvent, t: Dict): { icon: string; text: string; cls: str
       const i = e.info;
       const text = !i
         ? (e.text ?? "")
-        : i.type === "flash"
+        : i.type === "session"
+          ? t.infoSession
+          : i.type === "flash"
           ? `${t.infoFlash}: «${i.message}»`
           : i.type === "dialog"
           ? `${t.infoDialog} (${i.dialog}): «${i.message}» — ${i.accepted ? t.infoAccepted : t.infoDismissed}`

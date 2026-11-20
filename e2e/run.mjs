@@ -10,7 +10,8 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,7 +25,7 @@ const PASSWORD = "s3cret-Passw0rd";
 
 const TEXT_TOOLS = [
   "set_plan", "navigate", "snapshot", "click", "fill", "select", "hover", "press", "dismiss",
-  "wait_for", "wait", "scroll_to", "scroll", "upload_file", "switch_tab", "handle_dialog", "note",
+  "clear_session", "wait_for", "wait", "scroll_to", "scroll", "upload_file", "switch_tab", "handle_dialog", "note",
   "mock_request", "clear_mocks", "set_offline", "get_requests", "get_console", "ask_user",
   "report_step", "finish",
 ];
@@ -76,11 +77,13 @@ async function follow(base, id) {
 /**
  * One run of the app against a scripted model: its own server, its own settings
  * directory. `env` is added to the server's environment, `review` answers the
- * second-opinion questions (see model.mjs).
+ * second-opinion questions (see model.mjs). `home` keeps the settings directory
+ * from one run to the next (it is then the caller's to remove); `probe(base)`
+ * is called while the server is still up, and what it returns comes back as `probed`.
  */
-async function runWith(script, testCase, env = {}, review) {
+async function runWith(script, testCase, env = {}, review, { home: kept, probe } = {}) {
   const model = await startModel(script, { review });
-  const home = mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
+  const home = kept ?? mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", baseURL: model.url, apiKey: "e2e-key-0000000000", model: "scripted" }));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -104,11 +107,15 @@ async function runWith(script, testCase, env = {}, review) {
       const res = await fetch(base + step.screenshot);
       shots[step.num] = { type: res.headers.get("content-type"), bytes: (await res.arrayBuffer()).byteLength };
     }
-    return { run, events, model, shots };
+    const probed = probe ? await probe(base) : undefined;
+    return { run, events, model, shots, probed };
   } finally {
+    // the server may still be writing into its directory: wait until it is gone
+    const gone = once(app, "exit");
     app.kill();
+    await gone;
     model.close();
-    rmSync(home, { recursive: true, force: true });
+    if (!kept) rmSync(home, { recursive: true, force: true });
   }
 }
 
@@ -497,6 +504,72 @@ try {
     assert.doesNotMatch(first, /Page snapshot/, "…without the page tree it carried");
     assert.match(results.findLast((c) => c.startsWith("OK: navigated")), /Page snapshot/, "the latest result has its tree");
     console.log("✓ a long history keeps the outcomes of old actions and drops only their page trees");
+  }
+
+  // ── 11. a sign-in made on one run is there on the next ───────────────────────
+  {
+    const home = mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
+    const file = join(home, "session.json");
+    const logins = () => site.seen.filter((s) => s === "login").length;
+    const plan = (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the account — Welcome is shown"] }] })];
+    const open = (_tree, call) => [call("navigate", { url: site.url + "account" })];
+    const done = (_tree, call) => [
+      call("report_step", { num: 1, expected: "Welcome is shown", evidence: "heading Welcome, tester", status: "pass" }),
+      call("finish", { status: "passed", summary: "Done." }),
+    ];
+    const text = "Account\n1. Open the account.";
+    try {
+      // the first run has to sign in
+      const first = await runWith(
+        [plan, open, (tree, call) => [
+          call("fill", { ref: ref(tree, /textbox "Code"/), value: "1234", name: "Code" }),
+          call("click", { ref: ref(tree, /button "Sign in"/), name: "Sign in" }),
+        ], done],
+        text, { QPILOT_VISION: "0" }, undefined, { home },
+      );
+      assert.equal(logins(), 1, "the first run signed in");
+      assert.doesNotMatch(first.model.requests[0].messages[1].content, /Sign-ins saved/, "nothing is said about saved sign-ins when there are none");
+      assert.match(toolResults(first.model.requests.at(-1)).at(-1), /token from an earlier visit: no/);
+      assert.ok(existsSync(file), "the sign-in is written down when the run ends");
+      assert.equal(statSync(file).mode & 0o777, 0o600, "…in a file only its owner can read");
+      assert.ok(JSON.parse(readFileSync(file, "utf-8")).cookies.some((c) => c.name === "sid"), "…the session cookie among it, though it has no expiry date");
+
+      // the second run starts where the first one ended
+      const second = await runWith([plan, open, done], text, { QPILOT_VISION: "0" }, undefined, {
+        home,
+        probe: (base) => fetch(`${base}/api/sessions`).then((r) => r.json()),
+      });
+      const opened = toolResults(second.model.requests.at(-1)).find((c) => c.startsWith("OK: navigated"));
+      assert.match(opened, /heading "Welcome, tester"/, "the account opens without a sign-in");
+      assert.match(opened, /token from an earlier visit: yes/, "site storage is back too, not only cookies");
+      assert.equal(logins(), 1, "nobody signed in a second time");
+      assert.match(second.model.requests[0].messages[1].content, /Sign-ins saved from earlier runs are loaded/, "the model is told it may already be signed in");
+      assert.ok(second.events.some((e) => e.info?.type === "session"), "the log says the run started with saved sign-ins");
+      assert.deepEqual(second.probed, { enabled: true, path: file, sites: ["127.0.0.1"] }, "Settings is given the site names and nothing else");
+
+      // a test case about signing in starts from a signed-out browser
+      const third = await runWith(
+        [plan, open, (_tree, call) => [call("clear_session")], done],
+        text, { QPILOT_VISION: "0" }, undefined,
+        { home, probe: (base) => fetch(`${base}/api/sessions`, { method: "DELETE" }).then((r) => r.json()) },
+      );
+      assert.match(toolResults(third.model.requests.at(-1)).find((c) => c.startsWith("OK: signed out")) ?? "", /heading "Sign in"/, "clear_session signs out: the sign-in form is back");
+      assert.equal(third.probed.sites.length, 0, "Forget in Settings removes what is saved");
+      assert.ok(!existsSync(file), "…the file with it");
+
+      // QPILOT_SESSIONS=0: nothing is kept
+      await runWith(
+        [plan, open, (tree, call) => [
+          call("fill", { ref: ref(tree, /textbox "Code"/), value: "1234", name: "Code" }),
+          call("click", { ref: ref(tree, /button "Sign in"/), name: "Sign in" }),
+        ], done],
+        text, { QPILOT_VISION: "0", QPILOT_SESSIONS: "0" }, undefined, { home },
+      );
+      assert.ok(!existsSync(file), "with QPILOT_SESSIONS=0 a run leaves nothing behind");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+    console.log("✓ a sign-in is kept between runs, cleared on request, and never kept when turned off");
   }
 } catch (err) {
   failed = true;
