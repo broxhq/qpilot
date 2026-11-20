@@ -78,6 +78,15 @@ For a change to the agent's behaviour (the prompt, a tool, what a result says) t
 not enough: run at least one real test case with a real model, and one that worked
 before. Say in the PR which test cases you ran and against which model.
 
+`npm run live` helps with that. It runs a handful of small cases against the model from
+your settings, on the same local pages the e2e run uses. Each case has a known right
+verdict and stands for one way the agent has gone wrong on real sites: a form that
+refuses in silence, an error shown only by a toast, a step about every item, an unnamed
+icon. It prints the verdict against the expected one, the evidence, and how many actions
+and model calls each case took. Run it before and after your change — and with a second
+model, if you want to tell what is the model and what is the framework. It spends real
+model calls and is not part of CI.
+
 ## How the code is organised
 
 ```
