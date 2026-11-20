@@ -22,7 +22,9 @@ import { fileURLToPath } from "node:url";
 import { startSite } from "./site.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SERVER = join(ROOT, ".next", "standalone", "server.js");
+// LIVE_SERVER=<path to another build's server.js> runs the same cases against
+// that build — an older commit, to see what a change did.
+const SERVER = process.env.LIVE_SERVER ?? join(ROOT, ".next", "standalone", "server.js");
 if (!existsSync(SERVER)) throw new Error("Build the app first: npm run build");
 
 // expect: the right status of each step; says: what the evidence must mention

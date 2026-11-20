@@ -471,7 +471,14 @@ try {
     const { run, model } = await runWith(
       [
         (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the page — it opens"] }] })],
-        again, again, again, again, again, again,
+        again, again, again, again, again,
+        // a verdict in the same turn as the action it judges is turned down — and
+        // the finish that follows it must not close the run with the step unreported
+        (_tree, call) => [
+          call("navigate", { url: site.url + "big" }),
+          call("report_step", { num: 1, expected: "it opens", evidence: "heading Dashboard", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
         (_tree, call) => [
           call("report_step", { num: 1, expected: "it opens", evidence: "heading Dashboard", status: "pass", not_checked: ["Kenya", "Uganda"] }),
           call("finish", { status: "passed", summary: "Done." }),
@@ -482,12 +489,13 @@ try {
     );
     assert.deepEqual([run.steps[0].status, run.steps[0].evidence], ["warn", "heading Dashboard Not checked: Kenya, Uganda."], "a pass that left items unchecked is recorded as a warn that names them");
     assert.ok(run.steps[0].screenshot, "…with a screenshot, like any warn");
+    assert.match(toolResults(model.requests.at(-1)).find((c) => c.includes("Report that step first")) ?? "", /^Error: not executed\. A verdict in this turn was not recorded/, "a finish right after a refused verdict is not run");
     const results = toolResults(model.requests.at(-1));
     const first = results.find((c) => c.startsWith("OK: navigated"));
     assert.match(first, /After this action: \d+ request\(s\) sent/, "an old result still says what the action led to");
     assert.match(first, /page tree that came with this is no longer kept/);
     assert.doesNotMatch(first, /Page snapshot/, "…without the page tree it carried");
-    assert.match(results.at(-1), /Page snapshot/, "the latest result has its tree");
+    assert.match(results.findLast((c) => c.startsWith("OK: navigated")), /Page snapshot/, "the latest result has its tree");
     console.log("✓ a long history keeps the outcomes of old actions and drops only their page trees");
   }
 } catch (err) {

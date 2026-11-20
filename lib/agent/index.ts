@@ -342,6 +342,9 @@ export async function runAgent(
       // Only the last page action of the turn reads the page back (see actionResult).
       const lastPageAction = toolUseBlocks.map((t) => PAGE_ACTIONS.has(t.name)).lastIndexOf(true);
       let actedThisTurn = false;
+      // a verdict of this turn was turned down: a finish that follows it in the
+      // same turn would close the run with that step unreported
+      let verdictRefused = false;
       // set when the framework closed the step during this turn: what is left of
       // the turn was meant for that step and is not run
       let cutOff = "";
@@ -365,7 +368,17 @@ export async function runAgent(
 
         // A verdict given in the same turn as the action it judges is a guess:
         // the model has not seen the result yet.
+        if (name === "finish" && verdictRefused) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: b.id,
+            content: "Error: not executed. A verdict in this turn was not recorded (see above). Report that step first, then call finish.",
+            is_error: true,
+          });
+          continue;
+        }
         if (name === "report_step" && actedThisTurn) {
+          verdictRefused = true;
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
@@ -497,6 +510,7 @@ export async function runAgent(
             stepNum,
           });
           if (ret.finished) finished = true;
+          if (name === "report_step" && ret.content.startsWith("Error")) verdictRefused = true;
           if (name === "navigate" || name === "ask_user") progressedThisTurn = true;
           // a verdict of the agent's own ends a series of steps closed for it
           if (name === "report_step" && ret.content.startsWith("OK:")) cutOffInARow = 0;
