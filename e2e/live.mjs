@@ -35,6 +35,12 @@ const CASES = {
     expect: ["pass"],
     says: [/saved/i],
   },
+  unmarked: {
+    about: "the same form with nothing on the page to say which field is required",
+    text: (url) => `Records\nURL: ${url}unmarked\n1. Press Save.\n   Expected result: the record is saved, the status shows "Saved".`,
+    expect: ["pass"],
+    says: [/saved/i],
+  },
   toast: {
     about: "an error shown only by a toast that is gone in two seconds",
     text: (url) => `Records\nURL: ${url}toast\n1. Press Save.\n   Expected result: the record is saved without errors.`,

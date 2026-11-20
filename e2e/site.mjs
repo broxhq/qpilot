@@ -121,6 +121,11 @@ const prices = { Kenya: "Price: 10 USD", Uganda: "Price: 12 USD", Tanzania: "Pri
 function show(c) { document.getElementById("panel").textContent = c + " — " + prices[c]; }
 </script></body></html>`;
 
+// The same form with nothing on the page to say the field is required: no
+// asterisk, only aria-required, which the page tree does not show. The first
+// press of Save is bound to do nothing; what matters is what the agent does next.
+const unmarked = form.replace('<label for="title">Title *</label> <input id="title">', '<label for="title">Title</label> <input id="title" aria-required="true">');
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -135,7 +140,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/countries" ? countries : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>
