@@ -9,6 +9,13 @@ export const CONTEXT_BUDGET_CHARS = 64_000;
 
 export const KEEP_RECENT_TOOL_MSGS = 3;
 
+// What stays of an older tool result: what the action led to, not the page it
+// showed. The model must still know that Save was pressed and nothing was sent.
+const OLD_RESULT_CHARS = 1500;
+// When even that is too much, the oldest results are cut down to a line or two.
+const OLDEST_RESULT_CHARS = 240;
+const KEEP_OUTCOMES = 12;
+
 export const MAX_RETRIES = 5;
 
 export const MAX_BACKOFF_MS = 30_000;
@@ -59,21 +66,32 @@ export function dropScreenshots(
   return changed ? out : messages;
 }
 
-export function compactHistory(
-  history: Anthropic.MessageParam[],
-): Anthropic.MessageParam[] {
-  const messages = dropScreenshots(history, "[the screenshot is no longer kept — look again if you need it]", KEEP_SCREENSHOTS);
+/** A tool result without the page tree it carried: the outcome lines, notes and the list of changes. */
+function withoutTree(text: string, max: number): string {
+  if (text.startsWith("URL: ")) return "[page tree — no longer kept]";
+  const at = text.indexOf("\n\nURL: ");
+  const head = at >= 0 ? text.slice(0, at) : text;
+  const kept = head.length > max ? `${head.slice(0, max)}…` : head;
+  if (at >= 0) return `${kept}\n[the page tree that came with this is no longer kept]`;
+  return head.length > max ? `${kept}\n[the rest of this output is no longer kept]` : kept;
+}
 
-  // only text counts towards the budget: a screenshot is cheap for the model to
-  // read but huge as base64, and would push every page tree out of the history
-  const size = messages.reduce((n, m) => {
+// only text counts towards the budget: a screenshot is cheap for the model to
+// read but huge as base64, and would push every page tree out of the history
+const sizeOf = (messages: Anthropic.MessageParam[]) =>
+  messages.reduce((n, m) => {
     if (typeof m.content === "string") return n + m.content.length;
     return n + m.content.reduce(
       (k, b) => k + (b.type === "tool_result" ? textOf(b.content).length : JSON.stringify(b).length),
       0,
     );
   }, 0);
-  if (size <= CONTEXT_BUDGET_CHARS) return messages;
+
+export function compactHistory(
+  history: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  const messages = dropScreenshots(history, "[the screenshot is no longer kept — look again if you need it]", KEEP_SCREENSHOTS);
+  if (sizeOf(messages) <= CONTEXT_BUDGET_CHARS) return messages;
 
   const positions: Array<[number, number]> = [];
   for (let mi = 0; mi < messages.length; mi++) {
@@ -86,19 +104,42 @@ export function compactHistory(
     }
   }
 
-  const truncate = new Set(
-    positions.slice(0, -KEEP_RECENT_TOOL_MSGS).map(([mi, bi]) => `${mi}-${bi}`),
-  );
-
-  return messages.map((m, mi) => {
-    if (m.role !== "user" || !Array.isArray(m.content)) return m;
-    const content = (m.content as Anthropic.ToolResultBlockParam[]).map((b, bi) => {
-      if (!truncate.has(`${mi}-${bi}`) || b?.type !== "tool_result") return b;
-      const c = textOf(b.content);
-      return c.length < 400 && !hasImage(b.content) ? b : { ...b, content: `[…old tool output (page snapshot or request list), ${c.length} chars omitted]` };
+  // First the page trees go, from every result but the latest few. If the
+  // history is still too long, the outcomes of all but the last dozen actions
+  // are cut down to a line or two.
+  const cut = (limitFor: (order: number) => number | null) =>
+    messages.map((m, mi) => {
+      if (m.role !== "user" || !Array.isArray(m.content)) return m;
+      const content = m.content.map((b, bi) => {
+        if (b.type !== "tool_result") return b;
+        const order = positions.findIndex(([pm, pb]) => pm === mi && pb === bi);
+        const limit = limitFor(order);
+        if (limit === null) return b;
+        const c = textOf(b.content);
+        const kept = withoutTree(c, limit);
+        return kept === c && !hasImage(b.content) ? b : { ...b, content: kept };
+      });
+      return { ...m, content };
     });
-    return { ...m, content };
-  });
+
+  const old = positions.length - KEEP_RECENT_TOOL_MSGS;
+  let out = cut((order) => (order < old ? OLD_RESULT_CHARS : null));
+  if (sizeOf(out) > CONTEXT_BUDGET_CHARS) {
+    const oldest = positions.length - KEEP_OUTCOMES;
+    out = cut((order) => (order < oldest ? OLDEST_RESULT_CHARS : order < old ? OLD_RESULT_CHARS : null));
+  }
+  return out;
+}
+
+/**
+ * Puts the framework's note on where the run stands after the latest tool
+ * results. It is written anew for every call and never stored: the model reads
+ * the current step and what it has tried on it without digging through history.
+ */
+export function withState(messages: Anthropic.MessageParam[], state: string): Anthropic.MessageParam[] {
+  const last = messages[messages.length - 1];
+  if (!state || !last || last.role !== "user" || !Array.isArray(last.content)) return messages;
+  return [...messages.slice(0, -1), { ...last, content: [...last.content, { type: "text", text: state }] }];
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

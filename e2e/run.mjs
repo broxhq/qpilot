@@ -265,15 +265,17 @@ try {
     console.log("✓ a pass the second opinion objects to becomes a warn with the reason");
   }
 
-  // 41 different actions on one step: one more than the framework allows
-  const wander = (tag) => (_tree, call) => Array.from({ length: 41 }, (_, i) => call("note", { text: `${tag} ${i}` }));
+  // 41 actions on one step: one more than the framework allows
+  const wander = () => (_tree, call) => Array.from({ length: 41 }, () => call("clear_mocks"));
+  const onceMore = (_tree, call) => [call("clear_mocks")];
 
   // ── 4. a step the agent cannot finish is closed for it, the run goes on ──────
   {
     const { run, model, shots } = await runWith(
       [
         (_tree, call) => [call("set_plan", { groups: [{ steps: ["Wander about", "Open the form — the form is shown"] }] })],
-        wander("first"),
+        wander(),
+        onceMore,
         (_tree, call) => [call("report_step", { num: 1, evidence: "done after all", status: "pass" }), call("navigate", { url: site.url })],
         (_tree, call) => [
           call("report_step", { num: 2, expected: "the form is shown", evidence: "heading Banner form", status: "pass" }),
@@ -289,10 +291,29 @@ try {
     assert.equal(shots[1]?.type, "image/jpeg", "…with a screenshot of the moment");
     assert.equal(run.status, "failed");
     const told = toolResults(model.requests[2]);
-    assert.equal(told.filter((c) => c.includes("OK: noted")).length, 40, "40 actions ran");
-    assert.match(told.at(-1), /not executed\. Step 1 was closed by the framework as fail.*Go on with step 2/, "the 41st did not, and the model is sent on");
-    assert.match(toolResults(model.requests[3]).find((c) => c.includes("already reported")) ?? "", /step 1 is already reported as fail/, "the agent cannot overrule it");
+    assert.equal(told.filter((c) => c.includes("OK: removed")).length, 40, "40 actions ran");
+    assert.match(told.at(-1), /not executed\. You have used 40 actions on step 1\. Call report_step for step 1 now/, "the 41st did not: the model is asked for its own verdict first");
+    assert.match(toolResults(model.requests[3]).at(-1), /not executed\. Step 1 was closed by the framework as fail.*Go on with step 2/s, "it went on acting instead, so the step is closed for it");
+    assert.match(toolResults(model.requests[4]).find((c) => c.includes("already reported")) ?? "", /step 1 is already reported as fail/, "the agent cannot overrule it afterwards");
     console.log("✓ a step that eats 40 actions is closed as fail and the run goes on");
+  }
+
+  // ── 4b. …but a verdict the agent gives when asked is its own ────────────────
+  {
+    const { run } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Wander about"] }] })],
+        wander(),
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "it works", evidence: "tried 40 times, the page never answered", status: "warn" }),
+          call("finish", { status: "failed", summary: "Done." }),
+        ],
+      ],
+      "Wander\n1. Wander about.",
+      { QPILOT_VISION: "0" },
+    );
+    assert.deepEqual(run.steps.map((s) => [s.status, s.evidence]), [["warn", "tried 40 times, the page never answered"]], "the agent's own words are on the card, not the framework's");
+    console.log("✓ asked for a verdict at the limit, the agent gives its own");
   }
 
   // ── 5. three such steps in a row end the run ─────────────────────────────────
@@ -300,9 +321,9 @@ try {
     const { run, model } = await runWith(
       [
         (_tree, call) => [call("set_plan", { groups: [{ steps: ["One", "Two", "Three", "Four"] }] })],
-        wander("one"),
-        wander("two"),
-        wander("three"),
+        wander(), onceMore,
+        wander(), onceMore,
+        wander(), onceMore,
       ],
       "Lost\n1. One.\n2. Two.\n3. Three.\n4. Four.",
       { QPILOT_VISION: "0" },
@@ -310,7 +331,7 @@ try {
 
     assert.deepEqual(run.steps.map((s) => s.status), ["fail", "fail", "fail", "skipped"], "three steps closed, the rest not attempted");
     assert.match(run.summary, /3 steps in a row/);
-    assert.equal(model.requests.length, 4, "no model call after the third");
+    assert.equal(model.requests.length, 7, "no model call after the third");
     console.log("✓ three steps closed in a row stop the run");
   }
 
@@ -401,6 +422,70 @@ try {
     assert.ok(events.some((e) => e.info?.type === "flash" && e.info.message.includes("Could not save")), "the log has it too");
     assert.ok(run.steps[0].screenshot, "the failed step has a screenshot");
     console.log("✓ a message that vanished before the next look is reported");
+  }
+
+  // ── 9. a form that refuses in silence: the agent is told why, and is not let press a third time ─
+  {
+    const savesBefore = site.seen.filter((s) => s === "save").length;
+    const { run, model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Save the record — Saved is shown"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "form" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Save"/), name: "Save" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Save"/), name: "Save" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Save"/), name: "Save again" })],
+        (tree, call) => [
+          call("fill", { ref: ref(tree, /textbox "Title/), value: "Record", name: "Title" }),
+          call("click", { ref: ref(tree, /button "Save"/), name: "Save" }),
+        ],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "Saved is shown", evidence: "status: Saved; the Title was empty and had to be filled first", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Form\n1. Save the record.",
+      { QPILOT_VISION: "0" },
+    );
+    const last = model.requests.at(-1);
+    const results = toolResults(last);
+    const silent = results.filter((c) => c.startsWith("OK: clicked Save\nAfter this action: no request was sent and the page did not change (keyboard focus aside) — it had no effect"));
+    assert.equal(silent.length, 2, "a click that did nothing says so: no request, no change");
+    assert.match(silent[0], /Fields that look required but are empty or invalid.*"Title \*" — marked required \(\*\) and empty/, "…and names the field the form is waiting for");
+    assert.match(results.find((c) => c.includes("This exact action has been done 2 times")) ?? "", /^Error: not executed/, "the third identical press is not made");
+    assert.match(results.find((c) => c.includes("/api/save → 200")) ?? "", /After this action: 1 request\(s\) sent:\n  POST [^\n]*\/api\/save → 200/, "a click that did send a request says which and how it was answered");
+    assert.equal(site.seen.filter((s) => s === "save").length - savesBefore, 1, "the record was saved once");
+    // where the run stands is told every turn, with what was tried and what came of it
+    const state = model.requests[5].messages.at(-1);
+    assert.equal(state.role, "user");
+    assert.match(state.content, /^\[STATE/);
+    assert.match(state.content, /Step 1 of 1: "Save the record — Saved is shown"/);
+    assert.match(state.content, /1\. OK: navigated[^\n]*\n\s+2\. OK: clicked Save → no request sent, page unchanged; 1 field\(s\) look unfilled\n\s+3\. OK: clicked Save → no request sent, page unchanged/, "the ledger lists the actions of the step with their outcomes");
+    assert.deepEqual(run.steps.map((s) => s.status), ["pass"]);
+    console.log("✓ a silent form: the outcome, the blocking field and the ledger reach the model; a third identical press is refused");
+  }
+
+  // ── 10. a long history: old page trees go, what the actions led to stays ─────
+  {
+    const again = (_tree, call) => [call("navigate", { url: site.url + "big" })];
+    const { model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the page — it opens"] }] })],
+        again, again, again, again, again, again,
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "it opens", evidence: "heading Dashboard", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Long\n1. Open the page.",
+      { QPILOT_VISION: "0" },
+    );
+    const results = toolResults(model.requests.at(-1));
+    const first = results.find((c) => c.startsWith("OK: navigated"));
+    assert.match(first, /After this action: \d+ request\(s\) sent/, "an old result still says what the action led to");
+    assert.match(first, /page tree that came with this is no longer kept/);
+    assert.doesNotMatch(first, /Page snapshot/, "…without the page tree it carried");
+    assert.match(results.at(-1), /Page snapshot/, "the latest result has its tree");
+    console.log("✓ a long history keeps the outcomes of old actions and drops only their page trees");
   }
 } catch (err) {
   failed = true;

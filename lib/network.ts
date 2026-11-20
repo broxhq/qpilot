@@ -15,6 +15,20 @@ const MAX_CONSOLE = 100;
 // A request open for this long is long polling, not a page that is still loading.
 const LONG_POLL_MS = 8000;
 
+const MAX_DIGEST_REQUESTS = 5;
+const DIGEST_BODY_CHARS = 220;
+
+/** Host and path, without the query: enough to tell which call it was. */
+function shortUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.length > 70 ? `…${u.pathname.slice(-70)}` : u.pathname;
+    return `${u.host}${path}${u.search ? "?…" : ""}`;
+  } catch {
+    return url.slice(0, 90);
+  }
+}
+
 const SENSITIVE_KEY =
   /pass(word|wd)?|token|secret|authorization|cookie|session|otp|cvv|cvc|api[-_]?key|signature/i;
 const MASK = "•••";
@@ -163,6 +177,9 @@ export class NetworkMonitor {
   private consoleRead = 0;
   private unverifiedHits = 0;
   private marker = "(nothing yet — before the first action)";
+  /** Where the journal and the console stood when the current action began. */
+  private markSeq = 0;
+  private markConsole = 0;
   /** Requests sent and not yet answered, with the time they started. */
   private inflight = new Map<Request, number>();
   private context: BrowserContext;
@@ -226,6 +243,31 @@ export class NetworkMonitor {
   /** Called before every page action: requests from now on are listed as sent after it. */
   mark(action: string): void {
     this.marker = action;
+    this.markSeq = this.seq;
+    this.markConsole = this.consoleErrors.length;
+  }
+
+  /**
+   * What followed the action marked last: the requests it sent and what the
+   * console said. Handed to the model with the result of every action — "did
+   * anything happen, and what did the server answer" is the first thing a
+   * tester looks at when a click seems to do nothing.
+   */
+  sinceMark(): { total: number; requests: string[]; consoleErrors: string[] } {
+    const sent = this.log.filter((e) => e.n > this.markSeq);
+    // what the action submitted says more than what the page fetched afterwards
+    const ordered = [...sent.filter((e) => e.method !== "GET"), ...sent.filter((e) => e.method === "GET")];
+    const requests = ordered.slice(0, MAX_DIGEST_REQUESTS).map((e) => {
+      const outcome = e.failed ? `FAILED (${e.failed})` : e.status !== undefined ? String(e.status) : "pending";
+      const telling = e.method !== "GET" || e.failed || (e.status ?? 0) >= 400;
+      const body = telling && e.resBody ? ` ${e.resBody.replace(/\s+/g, " ").slice(0, DIGEST_BODY_CHARS)}` : "";
+      return `${e.method} ${shortUrl(e.url)} → ${outcome}${e.mocked ? " [mocked]" : ""}${body}`;
+    });
+    return {
+      total: sent.length,
+      requests,
+      consoleErrors: this.consoleErrors.slice(this.markConsole, this.markConsole + 3).map((t) => t.slice(0, 200)),
+    };
   }
 
   /** Console errors are per page — call for every page (tab) of the run. */

@@ -10,7 +10,7 @@ import { snapshot } from "./snapshot";
 import { MODEL_TIMEOUT_MS, resolveProvider } from "../provider";
 import { type ToolContext } from "./context";
 import { PAGE_ACTIONS, executeTool } from "./handlers";
-import { callModel, compactHistory, dropScreenshots } from "./model";
+import { callModel, compactHistory, dropScreenshots, withState } from "./model";
 import { captureEvidence, wirePage, withNotices } from "./page";
 import { watchFlashes } from "./flash";
 import { NUDGE } from "./prompt";
@@ -35,8 +35,21 @@ const STUCK_WINDOW = 24;
 
 const STUCK_DISTINCT = 4;
 
-// Actions on a single step before the agent is told to wrap it up.
+// Actions on a single step before the agent is asked to take stock.
 const STEP_ACTION_BUDGET = 15;
+
+// Looking does not spend the step's allowance: reading the request journal, the
+// console or the page again is how a tester works out why something did not
+// happen, and it used to cost the same as a click.
+const FREE = new Set(["set_plan", "report_step", "finish", "note", "ask_user", "get_requests", "get_console", "snapshot", "look", "measure"]);
+
+// Actions that are not run a third time when the same one has twice sent
+// nothing and changed nothing.
+const NO_EFFECT_GUARDED = new Set(["click", "click_at", "press", "fill", "select", "hover", "hover_at"]);
+const NO_EFFECT_TRIES = 2;
+
+// How much of the step's own history the model is shown every turn.
+const LEDGER_LINES = 20;
 
 // Actions on a single step before the framework closes it as fail and moves the
 // agent on: one lost step instead of a run that never gets to the rest.
@@ -86,6 +99,19 @@ async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | nul
     `Step ${num} was closed by the framework as fail: ${spent} actions without a verdict. Do not report it and do not go back to it. ` +
     (upcoming ? `Go on with step ${upcoming.num}: "${upcoming.description}".` : "All steps are reported — call finish.")
   );
+}
+
+/** The same action on the same element with the same value. */
+function exactSig(name: string, input: Record<string, unknown>): string {
+  const target = input.ref ?? (input.x !== undefined ? `${input.x},${input.y}` : input.text ?? "");
+  return `${name}:${target}:${input.value ?? input.key ?? ""}:${input.dx ?? ""},${input.dy ?? ""}`;
+}
+
+/** One line for the step ledger when the tool did not write its own. */
+function ledgerLine(name: string, input: Record<string, unknown>, result: string): string {
+  const what = input.name ?? input.text ?? input.find ?? input.near ?? input.url ?? input.ref ?? "";
+  const first = result.split("\n").find((l) => l.trim() && !l.startsWith("NOTE:")) ?? "";
+  return `${name}${what ? ` "${String(what).slice(0, 50)}"` : ""} → ${first.slice(0, 140)}`;
 }
 
 // Signature of a tool call for loop detection: tool + its semantic target +
@@ -140,6 +166,7 @@ export async function runAgent(
       lastTree: null,
       lastFull: null,
       wantTree: true,
+      tool: "",
       actionStarted: Date.now(),
       dialogPolicy: null,
       notices: [],
@@ -191,13 +218,44 @@ export async function runAgent(
     let budgetStep = ctx.step.current;
     let actionsOnStep = 0;
     let cutOffInARow = 0;
+    // what was done on the current step and what came of it, for the state note
+    let ledger: string[] = [];
+    let ledgerStep = ctx.step.current;
+    // the last guarded action that had no effect, and how many times in a row
+    const idle: { last: { sig: string; times: number } | null } = { last: null };
+    // a step the model has been told to report now, and the turn it was told in
+    let mustReport: { step: number; iter: number } | null = null;
+
+    const stateNote = () => {
+      const steps = getRun(runId)?.steps ?? [];
+      const current = steps.find((s) => s.num === ctx.step.current && s.status === "queued");
+      if (!current) return "";
+      const shown = ledger.slice(-LEDGER_LINES);
+      const earlier = ledger.length - shown.length;
+      return [
+        "[STATE — kept by the framework, always current]",
+        `Step ${current.num} of ${steps.length}: "${current.description}"`,
+        ledger.length
+          ? `Done on this step so far (${actionsOnStep} of ${STEP_ACTION_LIMIT} actions used):\n` +
+            (earlier > 0 ? `  … ${earlier} earlier\n` : "") +
+            shown.map((l, i) => `  ${earlier + i + 1}. ${l}`).join("\n")
+          : "Nothing done on this step yet.",
+      ].join("\n");
+    };
+    const asksForVerdict = (step: number, why: string) =>
+      `${why} Call report_step for step ${step} now and say what you did, what you observed and what stopped you: warn if the outcome is unclear, fail if the expected result is not there. Other calls will not be run, and if the step is not reported in your next turn the framework closes it as fail.`;
     // the plan arrives with the first turn, so the cap is read anew every iteration
     const iterationLimit = () =>
       Math.max(BASE_ITERATIONS, (getRun(runId)?.steps.length ?? 0) * STEP_ACTION_LIMIT);
 
     for (let iter = 0; iter < iterationLimit(); iter++) {
       await checkPause(runId);
-      const trimmed = compactHistory(messages);
+      if (ledgerStep !== ctx.step.current) {
+        ledgerStep = ctx.step.current;
+        ledger = [];
+        idle.last = null;
+      }
+      const trimmed = withState(compactHistory(messages), stateNote());
       const callStarted = Date.now();
       let response: Anthropic.Message;
       try {
@@ -292,6 +350,7 @@ export async function runAgent(
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
         ctx.wantTree = index === lastPageAction;
+        ctx.tool = name;
         ctx.actionStarted = Date.now();
 
         if (cutOff) {
@@ -323,9 +382,24 @@ export async function runAgent(
           budgetStep = ctx.step.current;
           actionsOnStep = 0;
         }
-        const countsAsAction = name !== "report_step" && name !== "set_plan" && name !== "finish";
-        if (countsAsAction && actionsOnStep >= STEP_ACTION_LIMIT) {
+        const countsAsAction = !FREE.has(name);
+        // The step has to be reported now: the model was told so (the allowance
+        // is used up, or it was going in circles). It gets one turn to give its
+        // own verdict — it knows what it saw; a step closed for it says nothing.
+        if (mustReport && mustReport.step !== ctx.step.current) mustReport = null;
+        if (name !== "report_step" && (mustReport || (countsAsAction && actionsOnStep >= STEP_ACTION_LIMIT))) {
+          if (!mustReport) mustReport = { step: ctx.step.current, iter };
+          if (mustReport.iter === iter) {
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: b.id,
+              content: `Error: not executed. ${asksForVerdict(mustReport.step, `You have used ${actionsOnStep} actions on step ${mustReport.step}.`)}`,
+              is_error: true,
+            });
+            continue;
+          }
           const closed = await cutOffStep(ctx, actionsOnStep);
+          mustReport = null;
           if (closed) {
             cutOff = closed;
             cutOffInARow++;
@@ -337,6 +411,24 @@ export async function runAgent(
             });
             continue;
           }
+        }
+
+        // The same action has twice sent nothing and changed nothing: a third
+        // press will not either. Say so instead of pressing, and ask for a cause.
+        const exact = exactSig(name, input);
+        if (NO_EFFECT_GUARDED.has(name) && idle.last?.sig === exact && idle.last.times >= NO_EFFECT_TRIES) {
+          actionsOnStep++;
+          ledger.push(`${name} ${JSON.stringify(input.name ?? input.ref ?? "")} → not run: the same action had no effect ${idle.last.times} times`);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: b.id,
+            content:
+              `Error: not executed. This exact action has been done ${idle.last.times} times in a row and each time no request was sent and the page did not change — doing it again will not help. ` +
+              "Work out what is holding it back before you act: a prerequisite that is missing (a required field left empty, a box not ticked, a dialog still open), the wrong control, or a defect of the product. " +
+              "Write the cause in a sentence or two, then do something different: fill what is missing, use another control, read get_requests or get_console, or report the step.",
+            is_error: true,
+          });
+          continue;
         }
 
         if (PAGE_ACTIONS.has(name)) {
@@ -351,7 +443,7 @@ export async function runAgent(
           actionsOnStep++;
           if (actionsOnStep === STEP_ACTION_BUDGET || (actionsOnStep > STEP_ACTION_BUDGET && actionsOnStep % 10 === 0)) {
             ctx.notices.push(
-              `You have spent ${actionsOnStep} actions on step ${ctx.step.current}. Do only what the step asks. If its expected result is not there by now, report the step as fail (or warn) with what you observed and go on — do not keep trying. At ${STEP_ACTION_LIMIT} actions the step is closed as fail without your verdict.`,
+              `${actionsOnStep} of ${STEP_ACTION_LIMIT} actions are used on step ${ctx.step.current}. Take stock from the list of what you have done: if each action moved the step forward, go on; if you are repeating yourself, name what is in the way and either remove it or report the step with what you observed.`,
             );
           }
         }
@@ -378,6 +470,16 @@ export async function runAgent(
           if (toolStarted) addStats(runId, { browserMs: Date.now() - toolStarted });
           const text = withNotices(ctx, ret.content);
           ctx.reviewer.record(name, input, text);
+          if (!FREE.has(name) || name === "get_requests" || name === "get_console") {
+            ledger.push(ret.brief ?? ledgerLine(name, input, ret.content));
+          }
+          if (NO_EFFECT_GUARDED.has(name) && ret.effect === false) {
+            idle.last = { sig: exact, times: idle.last?.sig === exact ? idle.last.times + 1 : 1 };
+          } else if (ret.effect === true || (PAGE_ACTIONS.has(name) && exact !== idle.last?.sig)) {
+            // something did happen, or something else was done (a field filled
+            // in the middle of a turn, whose effect is not read): a new situation
+            idle.last = null;
+          }
           toolResults.push({
             type: "tool_result",
             tool_use_id: b.id,
@@ -401,6 +503,7 @@ export async function runAgent(
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.reviewer.record(name, input, `Error: ${message}`);
+          ledger.push(ledgerLine(name, input, `Error: ${message}`));
           // after a failed action the model needs to see the page: give it the
           // tree now instead of making it spend a turn on snapshot
           const tree =
@@ -439,14 +542,25 @@ export async function runAgent(
 
       // Repetition guard: progress (a completed step / navigate / user answer)
       // clears the buffer. Otherwise, if many actions pile up with very few
-      // unique signatures, the agent is repeating itself — stop.
-      if (ctx.step.current > lastStep || progressedThisTurn) {
+      // unique signatures, the agent is going in circles. That costs it the
+      // step, not the run: it is told to report the step and sent on.
+      const circling =
+        sigsSinceProgress.length >= STUCK_WINDOW && new Set(sigsSinceProgress).size <= STUCK_DISTINCT;
+      const open = (getRun(runId)?.steps ?? []).some((s) => s.num === ctx.step.current && s.status === "queued");
+      if (ctx.step.current !== lastStep || progressedThisTurn) {
         lastStep = ctx.step.current;
         sigsSinceProgress = [];
-      } else if (
-        sigsSinceProgress.length >= STUCK_WINDOW &&
-        new Set(sigsSinceProgress).size <= STUCK_DISTINCT
-      ) {
+      } else if (circling && open && !mustReport) {
+        sigsSinceProgress = [];
+        mustReport = { step: ctx.step.current, iter };
+        const last = messages[messages.length - 1];
+        if (last?.role === "user" && Array.isArray(last.content)) {
+          last.content.push({
+            type: "text",
+            text: asksForVerdict(ctx.step.current, `The last ${STUCK_WINDOW} calls on step ${ctx.step.current} were the same few, over and over, without getting anywhere.`),
+          });
+        }
+      } else if (circling && !open) {
         await ctx.reviewer.settle();
         pushEvent(runId, {
           ts: Date.now(),

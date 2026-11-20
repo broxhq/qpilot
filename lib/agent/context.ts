@@ -27,6 +27,8 @@ export interface ToolContext {
   lastFull: string | null;
   /** false for all but the last page action of a turn: only that one returns the page tree. */
   wantTree: boolean;
+  /** The tool being run right now. */
+  tool: string;
   /** When the current tool call started — settling waits only for requests sent after it. */
   actionStarted: number;
   /** One-shot answer for the next native dialog, set by handle_dialog. */
@@ -45,6 +47,10 @@ export interface ToolResult {
   image?: Buffer;
   observation?: string;
   finished?: boolean;
+  /** One line for the step ledger: what was done and what came of it. */
+  brief?: string;
+  /** false when the action sent nothing and changed nothing on the page. Unset when that is not known. */
+  effect?: boolean;
 }
 
 // Playwright prefixes refs of elements inside a (same-origin) iframe with the

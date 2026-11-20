@@ -14,7 +14,7 @@ import { captureEvidence, note } from "./page";
 import { redact } from "./redact";
 
 export const FLASH_NOTE = "Appeared on the page and vanished on its own";
-// a carousel or a ticker shows the same text again and again: say it twice, then stop
+// a carousel or a ticker shows the same text again and again: say it twice on a step, then stop
 const SAME_TEXT_TIMES = 2;
 const MAX_UNREAD = 5;
 const MAX_SHOTS = 6;
@@ -154,7 +154,8 @@ function watchInPage(): void {
         // a menu or a tooltip closes because of a click or a mouse move; a toast
         // goes away with nobody touching anything
         // (one that calls itself an alert is believed even if the agent has moved on)
-        const onItsOwn = lastInput < t.at;
+        // (<=: the click that made it appear can carry the same millisecond)
+        const onItsOwn = lastInput <= t.at;
         const life = now - t.at;
         if (life < 300 || !(onItsOwn || (t.named && life <= 8000))) continue;
         // a re-render swaps the node for a new one with the same words: nothing vanished
@@ -188,8 +189,10 @@ export async function watchFlashes(ctx: ToolContext): Promise<void> {
     const text = r.text.slice(0, 300);
     const shot = shots.get(r.id);
     shots.delete(r.id);
-    const times = (told.get(text) ?? 0) + 1;
-    told.set(text, times);
+    // counted per step: the same "Could not save" on a later step is news again
+    const key = `${ctx.step.current}|${text}`;
+    const times = (told.get(key) ?? 0) + 1;
+    told.set(key, times);
     if (times > SAME_TEXT_TIMES) return;
     if (ctx.notices.filter((n) => n.startsWith(FLASH_NOTE)).length >= MAX_UNREAD) return;
     if (shot) ctx.flashShot = shot;

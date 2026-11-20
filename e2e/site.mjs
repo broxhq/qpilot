@@ -93,6 +93,23 @@ function save() {
 }
 </script></body></html>`;
 
+// A form that refuses in silence, the way custom ones do: Save does nothing at
+// all while a field marked with an asterisk is empty — no message, no request,
+// only a red border, which the page tree does not carry.
+const form = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Silent form</title></head><body>
+<h1>New record</h1>
+<div><label for="title">Title *</label> <input id="title"></div>
+<div><label for="note">Note</label> <input id="note"></div>
+<button onclick="save()">Save</button> <span id="status" role="status"></span>
+<script>
+async function save() {
+  const title = document.getElementById("title");
+  if (!title.value.trim()) { title.style.border = "2px solid red"; return; }
+  const res = await fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: title.value }) });
+  document.getElementById("status").textContent = res.ok ? "Saved" : "Save failed";
+}
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -107,7 +124,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

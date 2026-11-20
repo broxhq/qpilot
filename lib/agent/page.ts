@@ -110,6 +110,99 @@ async function waitForAppearing(page: Page, maxMs = 1000): Promise<void> {
   }
 }
 
+// Tools after which "nothing happened" usually means a form refused to submit.
+const SUBMITS = new Set(["click", "press", "click_at"]);
+
+/**
+ * Fields that would stop a form from being sent: invalid by the browser's own
+ * rules, marked invalid or required by the page, or labelled with an asterisk
+ * and left empty. A person sees the red border; the page tree has no such thing.
+ * It is a reading of the markup, not a fact about the form's logic.
+ */
+async function blockingFields(page: Page): Promise<string[]> {
+  return page
+    .evaluate(() => {
+      const out: string[] = [];
+      const seen = new Set<Element>();
+      const squash = (t: string | null | undefined) => (t ?? "").replace(/\s+/g, " ").trim();
+      const visible = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+      };
+      type Field = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+      const isField = (el: Element | null | undefined): el is Field =>
+        el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
+      // the text box of a custom dropdown is empty even when a value is chosen
+      const picker = (el: Element) =>
+        el.getAttribute("role") === "combobox" || el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-autocomplete") || (el as HTMLInputElement).readOnly === true;
+      const empty = (el: Field) =>
+        el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio") ? !el.checked : !el.value.trim();
+      const labelOf = (el: Element) => {
+        const id = el.getAttribute("id");
+        const own = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+        return squash(
+          el.getAttribute("aria-label") || own?.textContent || el.closest("label")?.textContent || el.getAttribute("placeholder") || el.getAttribute("name"),
+        ).slice(0, 60);
+      };
+      const add = (el: Element, why: string, label?: string) => {
+        if (seen.has(el) || !visible(el) || out.length >= 8) return;
+        seen.add(el);
+        out.push(`"${label || labelOf(el) || el.tagName.toLowerCase()}" — ${why}`);
+      };
+      for (const el of document.querySelectorAll("input, textarea, select")) {
+        if (!isField(el) || el.disabled || (el as HTMLInputElement).type === "hidden") continue;
+        if (!el.validity.valid) add(el, squash(el.validationMessage) || "invalid");
+      }
+      for (const el of document.querySelectorAll('[aria-invalid="true"]')) add(el, "marked invalid");
+      for (const el of document.querySelectorAll('[required], [aria-required="true"]')) {
+        if (isField(el) && !picker(el) && empty(el)) add(el, "required and empty");
+      }
+      for (const lab of document.querySelectorAll("label, legend")) {
+        const text = squash(lab.textContent);
+        if (!/\*$/.test(text) || text.length > 80) continue;
+        const forId = lab.getAttribute("for");
+        const ctl = (forId && document.getElementById(forId)) || lab.querySelector("input, textarea, select") || lab.parentElement?.querySelector("input, textarea, select");
+        if (isField(ctl) && !ctl.disabled && !picker(ctl) && empty(ctl)) add(ctl, "marked required (*) and empty", text.slice(0, 60));
+      }
+      return out;
+    })
+    .catch(() => []);
+}
+
+/**
+ * What the action led to, in the words a tester would use: which requests went
+ * out and how they were answered, what the console said, and — when nothing
+ * happened at all — what in the form may be holding it back. Without this the
+ * model got "OK: clicked Save" and an unchanged tree, and pressed Save again.
+ */
+async function outcome(ctx: ToolContext, unchanged: boolean | null): Promise<{ text: string; brief: string; effect?: boolean }> {
+  const since = ctx.net.sinceMark();
+  const lines: string[] = [];
+  let brief: string;
+  if (since.total === 0) {
+    brief = unchanged ? "no request sent, page unchanged" : unchanged === false ? "no request sent, page changed" : "no request sent";
+    lines.push(
+      unchanged
+        ? "After this action: no request was sent and the page did not change (keyboard focus aside) — it had no effect."
+        : "After this action: no request was sent.",
+    );
+  } else {
+    const more = since.total > since.requests.length ? ` (+${since.total - since.requests.length} more — get_requests lists them)` : "";
+    lines.push(`After this action: ${since.total} request(s) sent${more}:\n${since.requests.map((r) => `  ${r}`).join("\n")}`);
+    brief = since.requests[0].replace(/^(\S+ \S+ → \S+).*$/s, "$1") + (since.total > 1 ? ` (+${since.total - 1})` : "") + (unchanged ? ", page unchanged" : "");
+  }
+  if (since.consoleErrors.length) lines.push(`New console errors: ${since.consoleErrors.join(" | ")}`);
+  if (since.total === 0 && unchanged && SUBMITS.has(ctx.tool)) {
+    const fields = await blockingFields(ctx.page);
+    if (fields.length) {
+      lines.push(`Fields that look required but are empty or invalid (read from the markup — the form may be waiting for them): ${fields.join("; ")}`);
+      brief += `; ${fields.length} field(s) look unfilled`;
+    }
+  }
+  return { text: lines.join("\n"), brief, effect: unchanged === null ? undefined : !(since.total === 0 && unchanged) };
+}
+
 // Return a fresh snapshot in the SAME result as the action — this removes the
 // separate snapshot call after every action and roughly halves iterations per
 // step. Only the short observation goes to events/SSE; the tree goes to the model.
@@ -122,23 +215,41 @@ export async function actionResult(ctx: ToolContext, msg: string): Promise<ToolR
     // not the last action of the turn: the next one follows at once, and reading
     // the page here would cost a snapshot nobody looks at
     await ctx.net.waitForQuiet(ctx.actionStarted, 1200);
-    return { content: `${msg}\n(the page tree comes with the last action of this turn)`, observation: msg };
+    const done = await outcome(ctx, null);
+    return {
+      content: `${msg}\n${done.text}\n(the page tree comes with the last action of this turn)`,
+      observation: msg,
+      brief: `${msg} → ${done.brief}`,
+    };
   }
   await ctx.net.waitForQuiet(ctx.actionStarted, 4000);
   await waitForAppearing(ctx.page);
   const read = await readPage(ctx.page).catch(() => null);
   const tree = read?.view ?? "";
   const tabs = tabsLine(ctx);
-  const changes = read ? describeChanges(ctx.lastFull, read.full) : "";
+  const before = ctx.lastFull;
+  const changes = read ? describeChanges(before, read.full) : "";
   if (read) {
     ctx.lastTree = read.view;
     ctx.lastFull = read.full;
   }
-  const body = [msg, tabs, changes, tree].filter(Boolean).join("\n\n");
-  return { content: body, observation: msg };
+  // a click moves keyboard focus to what was clicked; that alone is not the page answering
+  const unchanged = read ? changes.startsWith(NO_CHANGES) || sameButFocus(before, read.full) : null;
+  // the first look at a page has nothing to compare with: that is not "unchanged"
+  const done = await outcome(ctx, changes ? unchanged : null);
+  const body = [`${msg}\n${done.text}`, tabs, changes, tree].filter(Boolean).join("\n\n");
+  return { content: body, observation: msg, brief: `${msg} → ${done.brief}`, effect: done.effect };
+}
+
+/** True when two page trees differ only in which element has keyboard focus. */
+function sameButFocus(before: string | null, after: string): boolean {
+  if (before === null) return false;
+  const plain = (t: string) => t.replace(/\s*\[ref=[^\]]+\]/g, "").replace(/ \[active\]/g, "");
+  return plain(before) === plain(after);
 }
 
 export const MAX_CHANGE_LINES = 40;
+const NO_CHANGES = "Changes since the previous page tree: NONE";
 
 /**
  * What the action changed on the page, as removed (−) and added (+) lines of the
@@ -168,7 +279,7 @@ export function describeChanges(before: string | null, after: string): string {
   for (const [l, n] of ca) for (let i = cb.get(l) ?? 0; i < n; i++) removed.push(l);
   for (const [l, n] of cb) for (let i = ca.get(l) ?? 0; i < n; i++) added.push(l);
   if (removed.length === 0 && added.length === 0) {
-    return "Changes since the previous page tree: NONE — the page looks exactly as before.";
+    return `${NO_CHANGES} — the page looks exactly as before.`;
   }
   const lines = [...removed.map((l) => `− ${l}`), ...added.map((l) => `+ ${l}`)];
   const shown = lines.slice(0, MAX_CHANGE_LINES);
