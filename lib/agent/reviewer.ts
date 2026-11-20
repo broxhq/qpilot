@@ -41,6 +41,7 @@ Rules:
 - Judge only the expected result of this step. Other steps and anything else on the page are not your concern.
 - Wording differences do not matter; meaning does. "Shown: Order created" confirms "a success message appears".
 - contradicted needs a fact you can point to. If you are not sure, answer cannot_tell.
+- A step that covers several items (each, every, all, a list of values) holds only if the records show every one of them checked. If the records show the agent checked some and never touched the others, that is contradicted: name the ones left out.
 - reason: one sentence in the language of the test case, quoting the fact you rely on.`;
 
 type Verdict = "confirmed" | "contradicted" | "cannot_tell";

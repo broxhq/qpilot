@@ -32,13 +32,20 @@ export async function findAnchor(page: Page, wanted: string): Promise<Locator | 
 
 const MAX_HINTED = 40;
 
+type Box = { x: number; y: number; w: number; h: number };
+type Size = { width: number; height: number };
+
+const onScreen = (b: Box | null | undefined, size: Size) =>
+  !!b && b.w > 0 && b.h > 0 && b.x < size.width && b.x + b.w > 0 && b.y < size.height && b.y + b.h > 0;
+
 /**
  * Icon-only controls have no accessible name: the tree shows a bare `button
  * [ref=e12]`, and a header with five of them gives the model nothing to tell
  * the bell from the help icon. Add what the markup does say — test ids, class
- * names, the icon's file or sprite id, a link target.
+ * names, the icon's file or sprite id, a link target — and where the control is
+ * on screen: "the third icon from the right" is how a test case names it.
  */
-async function hintUnnamed(page: Page, tree: string): Promise<string> {
+async function hintUnnamed(page: Page, tree: string, boxes: Map<string, Box>, size: Size | null): Promise<string> {
   const bare = /^\s*- (?:button|link|img|menuitem|tab) \[ref=((?:f\d+)?e\d+)\]/;
   // controls first: an <img> inside every button would use up the whole allowance
   const found = tree.split("\n").filter((l) => bare.test(l));
@@ -90,7 +97,10 @@ async function hintUnnamed(page: Page, tree: string): Promise<string> {
     .split("\n")
     .map((line) => {
       const ref = line.match(bare)?.[1];
-      const hint = ref ? byRef.get(ref) : "";
+      if (!ref) return line;
+      const box = boxes.get(ref);
+      const where = size && onScreen(box, size) ? `at ${Math.round(box!.x + box!.w / 2)},${Math.round(box!.y + box!.h / 2)}` : "";
+      const hint = [byRef.get(ref), where].filter(Boolean).join(", ");
       return hint ? line.replace(`[ref=${ref}]`, `[ref=${ref}] (no name; ${hint})`) : line;
     })
     .join("\n");
@@ -102,16 +112,46 @@ const SCREEN_OVERRUN = 3000;
 const TRUNCATED =
   "\n... (truncated. Elements past this point are NOT shown — including submit/footer buttons at the bottom of long forms. To act on something not listed here, use snapshot with `near='<text near it>'`, or scroll_to('<button text>') to bring it into a fresh snapshot. Scrolling alone won't reveal it.)";
 const LINE_REF = /\[ref=((?:f\d+)?e\d+)\]/;
+const LINE_BOX = / \[box=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\]/;
 
 /**
- * A page that does not fit the budget used to be cut in DOM order, and DOM
- * order is not what a person sees: a header rendered through a portal sits at
- * the end of the DOM and was cut off, while a widget far below the fold came
- * first. So for a big page the part on screen goes first and in full, and the
- * rest follows in page order as far as the budget allows. Returns null when
- * nothing could be placed on screen (the caller then cuts as before).
+ * Takes the boxes out of a tree made with `boxes: true`: the clean tree, and
+ * the box of every ref in viewport coordinates (a box inside an iframe is given
+ * relative to that iframe, so the iframe's own corner is added).
  */
-async function screenFirst(page: Page, tree: string): Promise<string | null> {
+function splitBoxes(raw: string): { tree: string; boxes: Map<string, Box> } {
+  const boxes = new Map<string, Box>();
+  const frames: { indent: number; x: number; y: number }[] = [];
+  const tree = raw
+    .split("\n")
+    .map((line) => {
+      const m = line.match(LINE_BOX);
+      if (!m) return line;
+      const indent = line.length - line.trimStart().length;
+      while (frames.length && frames[frames.length - 1].indent >= indent) frames.pop();
+      const at = frames[frames.length - 1];
+      const box = { x: Number(m[1]) + (at?.x ?? 0), y: Number(m[2]) + (at?.y ?? 0), w: Number(m[3]), h: Number(m[4]) };
+      const ref = line.match(LINE_REF)?.[1];
+      if (ref) boxes.set(ref, box);
+      if (/^\s*- iframe\b/.test(line)) frames.push({ indent, x: box.x, y: box.y });
+      return line.replace(LINE_BOX, "");
+    })
+    .join("\n");
+  return { tree, boxes };
+}
+
+/**
+ * The tree in two parts: what is on screen, then the rest in page order.
+ *
+ * DOM order is not what a person sees: a header rendered through a portal sits
+ * at the end of the DOM, a widget far below the fold comes first, and a panel
+ * that has just opened shares its title with a block down the page. So the part
+ * on screen goes first and in full, and is named as such on every page — not
+ * only on the ones too big for the budget, where the cut used to fall in DOM
+ * order and took the header with it. Returns null when everything is on screen
+ * or nothing could be placed (the tree is then given as it is).
+ */
+function screenFirst(tree: string, boxes: Map<string, Box>, size: Size): string | null {
   const lines = tree.split("\n");
   const n = lines.length;
   const indent = lines.map((l) => l.length - l.trimStart().length);
@@ -133,25 +173,15 @@ async function screenFirst(page: Page, tree: string): Promise<string | null> {
   }
   const judged = lines.map((_, i) => !!ref[i] && (!refBelow[i] || plainChild[i]));
 
-  const size = page.viewportSize() ?? (await page.evaluate(() => ({ width: innerWidth, height: innerHeight })).catch(() => null));
-  if (!size) return null;
-  const visible = await Promise.all(
-    lines.map(async (_, i) => {
-      if (!judged[i]) return false;
-      const box = await page.locator(`aria-ref=${ref[i]}`).boundingBox({ timeout: 1500 }).catch(() => null);
-      return (
-        !!box && box.width > 0 && box.height > 0 &&
-        box.x < size.width && box.x + box.width > 0 && box.y < size.height && box.y + box.height > 0
-      );
-    }),
-  );
-
   // own[i]: true = on screen, false = off screen, null = only a container of others
   const own: (boolean | null)[] = new Array(n).fill(null);
   for (let i = 0; i < n; i++) {
-    if (judged[i]) own[i] = visible[i];
+    if (judged[i]) own[i] = onScreen(boxes.get(ref[i]!), size);
     else if (!ref[i]) own[i] = parent[i] >= 0 ? (own[parent[i]] ?? false) : false;
   }
+  // the page itself (the outermost container) is always "on screen": what tells
+  // is whether anything with a box of its own is off it
+  if (!judged.some((j, i) => j && own[i] === false)) return null;
   const part = (want: boolean) => {
     const keep: boolean[] = new Array(n).fill(false);
     for (let i = 0; i < n; i++) {
@@ -166,7 +196,7 @@ async function screenFirst(page: Page, tree: string): Promise<string | null> {
   const room = Math.max(SCREEN_OVERRUN, MAX_SNAPSHOT_CHARS - on.length);
   if (off.length > room) off = off.slice(0, room) + TRUNCATED;
   return [
-    "ON SCREEN NOW — the page is too big to show whole; this is the part a person sees, in full:",
+    "ON SCREEN NOW — what a person sees without scrolling, in full:",
     on,
     "",
     "OFF SCREEN — the rest of the page, in page order:",
@@ -230,8 +260,11 @@ export async function readPage(page: Page, near?: string): Promise<{ view: strin
   }
 
   let tree = "";
+  let boxes = new Map<string, Box>();
   try {
-    tree = await target.ariaSnapshot({ mode: "ai", timeout: 5000 });
+    const read = splitBoxes(await target.ariaSnapshot({ mode: "ai", boxes: true, timeout: 5000 }));
+    tree = read.tree;
+    boxes = read.boxes;
   } catch (err) {
     tree = `(snapshot failed: ${err instanceof Error ? err.message : String(err)})`;
   } finally {
@@ -246,8 +279,9 @@ export async function readPage(page: Page, near?: string): Promise<{ view: strin
     }
   }
   const whole = tree;
-  if (tree.length > MAX_SNAPSHOT_CHARS) tree = (await screenFirst(page, tree)) ?? tree;
-  tree = await hintUnnamed(page, tree);
+  const size = page.viewportSize() ?? (await page.evaluate(() => ({ width: innerWidth, height: innerHeight })).catch(() => null));
+  if (size) tree = screenFirst(tree, boxes, size) ?? tree;
+  tree = await hintUnnamed(page, tree, boxes, size);
   if (tree.length > MAX_SNAPSHOT_CHARS + SCREEN_OVERRUN) {
     tree = tree.slice(0, MAX_SNAPSHOT_CHARS + SCREEN_OVERRUN) + TRUNCATED;
   }

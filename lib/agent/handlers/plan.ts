@@ -1,6 +1,7 @@
 // Tools that are about the run itself: the plan, verdicts, notes, questions to the user.
 
 import { askQuestion, getRun, pushEvent, saveScreenshot, setPlan } from "../../store";
+import { dict } from "../../i18n";
 import { type PlanGroup } from "../../types";
 import { type ReportStatus } from "../context";
 import { captureEvidence } from "../page";
@@ -139,7 +140,13 @@ export const planTools: ToolDef[] = [
           evidence: {
             type: "string",
             description:
-              "What you actually saw, one or two sentences: a verbatim quote from the page, a request and its status, a dialog text. For a 'changed / did not change' check give the value before and after for every element checked.",
+              "What you actually saw, one or two sentences: a verbatim quote from the page, a request and its status, a dialog text. For a 'changed / did not change' check give the value before and after for every element checked. For a step about several items, one clause per item.",
+          },
+          not_checked: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Only for a step that covers several items (each, every, all, a list of values): the items you did NOT check. Leave it out when you checked every one.",
           },
           status: {
             type: "string",
@@ -182,11 +189,19 @@ export const planTools: ToolDef[] = [
             "Error: not recorded. Something appeared on the page and vanished after your last look — it is in the NOTE above. Take it into account and call report_step again.",
         };
       }
+      const clean = (v: unknown) => redact(ctx, stripRefs(String(v))).trim();
+      // "Repeat for every country" judged on one country is not a pass: the
+      // agent says what it left out, and the framework draws the conclusion.
+      const skipped = Array.isArray(input.not_checked)
+        ? input.not_checked.map((v) => clean(v)).filter(Boolean).slice(0, 30)
+        : [];
+      const partial = status === "pass" && skipped.length > 0;
+      const coverage = skipped.length ? ` ${dict(getRun(runId)?.language).notChecked}: ${skipped.join(", ")}.` : "";
       // JPEG goes to the store and is served via a separate GET — never inlined in events/SSE
       let screenshot: string | undefined;
       const flashShot = ctx.flashShot;
       ctx.flashShot = null;
-      if (status === "fail" || status === "warn") {
+      if (status === "fail" || status === "warn" || partial) {
         // the page with the message still on it says more than the page after it
         const buf = flashShot ?? (await captureEvidence(page));
         if (buf) {
@@ -195,8 +210,7 @@ export const planTools: ToolDef[] = [
         }
       }
       // a pass gets a second opinion; if it objects, the step needs the page as it was now
-      const passShot = status === "pass" && ctx.reviewer.on ? await captureEvidence(page) : undefined;
-      const clean = (v: unknown) => redact(ctx, stripRefs(String(v))).trim();
+      const passShot = status === "pass" && !partial && ctx.reviewer.on ? await captureEvidence(page) : undefined;
       // console errors since the previous step: a note for the reader, not a verdict —
       // third-party scripts make most consoles noisy, so they never change the status
       const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
@@ -207,9 +221,9 @@ export const planTools: ToolDef[] = [
           (input.description ? clean(input.description).replace(/^\s*\d+[.)]\s*/, "") : "") ||
           planned?.description ||
           `Step ${num}`,
-        status,
+        status: partial ? ("warn" as const) : status,
         expected: input.expected ? clean(input.expected) : undefined,
-        evidence: input.evidence ? clean(input.evidence) : undefined,
+        evidence: input.evidence || coverage ? `${input.evidence ? clean(input.evidence) : ""}${coverage}`.trim() : undefined,
         screenshot,
         consoleErrors: consoleErrors.length ? consoleErrors : undefined,
         // a made-up response body whose shape was never compared to a real one
@@ -225,7 +239,7 @@ export const planTools: ToolDef[] = [
           description: planned?.description ?? step.description,
           expected: input.expected ? stripRefs(String(input.expected)) : undefined,
           evidence: input.evidence ? stripRefs(String(input.evidence)) : undefined,
-          status,
+          status: partial ? "warn" : status,
         },
         passShot,
       );
@@ -233,7 +247,7 @@ export const planTools: ToolDef[] = [
       const upcoming = plan.find((s) => s.num !== num && s.status === "queued");
       ctx.step.current = upcoming?.num ?? num + 1;
       return {
-        content: `OK: step ${step.num} = ${step.status}. ${upcoming ? `Next: step ${upcoming.num} — "${upcoming.description}".` : "That was the last step — call finish."}`,
+        content: `OK: step ${step.num} = ${step.status}${partial ? " (recorded as warn, not pass: part of what the step covers was not checked)" : ""}. ${upcoming ? `Next: step ${upcoming.num} — "${upcoming.description}".` : "That was the last step — call finish."}`,
       };
     },
   },

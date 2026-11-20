@@ -380,7 +380,7 @@ try {
     const split = (c) => c.split("OFF SCREEN");
     const opened = results.find((c) => c.startsWith("OK: navigated")) ?? "";
     assert.equal(split(opened).length, 2, "a big page comes in two parts");
-    assert.match(split(opened)[0], /button \[ref=e\d+\] \(no name; data-testid=menu-communication/, "the header at the end of the DOM is in the on-screen part, with its hint");
+    assert.match(split(opened)[0], /button \[ref=e\d+\] \(no name; data-testid=menu-communication[^)]*, at \d+,\d+\)/, "the header at the end of the DOM is in the on-screen part, with its hint and its place on screen");
     assert.doesNotMatch(split(opened)[0], /Report line 400|Old notice 1/, "what is down the page is not in the on-screen part");
     assert.match(split(opened)[1], /Report line 30/, "…the rest follows in page order");
     const clicked = results.find((c) => /^OK: clicked/.test(c)) ?? "";
@@ -450,6 +450,7 @@ try {
     const results = toolResults(last);
     const silent = results.filter((c) => c.startsWith("OK: clicked Save\nAfter this action: no request was sent and the page did not change (keyboard focus aside) — it had no effect"));
     assert.equal(silent.length, 2, "a click that did nothing says so: no request, no change");
+    assert.doesNotMatch(silent[0], /ON SCREEN NOW/, "a page that is all on screen is given as one tree");
     assert.match(silent[0], /Fields that look required but are empty or invalid.*"Title \*" — marked required \(\*\) and empty/, "…and names the field the form is waiting for");
     assert.match(results.find((c) => c.includes("This exact action has been done 2 times")) ?? "", /^Error: not executed/, "the third identical press is not made");
     assert.match(results.find((c) => c.includes("/api/save → 200")) ?? "", /After this action: 1 request\(s\) sent:\n  POST [^\n]*\/api\/save → 200/, "a click that did send a request says which and how it was answered");
@@ -467,18 +468,20 @@ try {
   // ── 10. a long history: old page trees go, what the actions led to stays ─────
   {
     const again = (_tree, call) => [call("navigate", { url: site.url + "big" })];
-    const { model } = await runWith(
+    const { run, model } = await runWith(
       [
         (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the page — it opens"] }] })],
         again, again, again, again, again, again,
         (_tree, call) => [
-          call("report_step", { num: 1, expected: "it opens", evidence: "heading Dashboard", status: "pass" }),
+          call("report_step", { num: 1, expected: "it opens", evidence: "heading Dashboard", status: "pass", not_checked: ["Kenya", "Uganda"] }),
           call("finish", { status: "passed", summary: "Done." }),
         ],
       ],
       "Long\n1. Open the page.",
       { QPILOT_VISION: "0" },
     );
+    assert.deepEqual([run.steps[0].status, run.steps[0].evidence], ["warn", "heading Dashboard Not checked: Kenya, Uganda."], "a pass that left items unchecked is recorded as a warn that names them");
+    assert.ok(run.steps[0].screenshot, "…with a screenshot, like any warn");
     const results = toolResults(model.requests.at(-1));
     const first = results.find((c) => c.startsWith("OK: navigated"));
     assert.match(first, /After this action: \d+ request\(s\) sent/, "an old result still says what the action led to");
