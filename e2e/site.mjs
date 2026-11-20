@@ -110,6 +110,17 @@ async function save() {
 }
 </script></body></html>`;
 
+// "Check every country": three tabs, and only the last one is wrong. An agent
+// that looks at the first tab and reports a pass has not done the step.
+const countries = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Prices</title></head><body>
+<h1>Prices by country</h1>
+<div role="tablist">${["Kenya", "Uganda", "Tanzania"].map((c) => `<button role="tab" onclick="show('${c}')">${c}</button>`).join(" ")}</div>
+<div id="panel" role="tabpanel">Pick a country</div>
+<script>
+const prices = { Kenya: "Price: 10 USD", Uganda: "Price: 12 USD", Tanzania: "Price is not set" };
+function show(c) { document.getElementById("panel").textContent = c + " — " + prices[c]; }
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -124,7 +135,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/countries" ? countries : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>
