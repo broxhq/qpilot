@@ -44,6 +44,7 @@ const STATUS_ICONS: Record<string, string> = {
   error:   toUrl(statusSvg(`<circle cx="12" cy="12" r="10" fill="#ef4444"/><path d="M8 8l8 8M16 8l-8 8" stroke="white" stroke-width="2.2" stroke-linecap="round"/>`)),
   waiting: toUrl(statusSvg(`<circle cx="12" cy="12" r="10" fill="#facc15"/><path d="M12 7v5.5l3 3" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`)),
   paused:  toUrl(statusSvg(`<circle cx="12" cy="12" r="10" fill="#64748b"/><path d="M9 8v8M15 8v8" stroke="white" stroke-width="2.2" stroke-linecap="round"/>`)),
+  stopped: toUrl(statusSvg(`<circle cx="12" cy="12" r="10" fill="#64748b"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" fill="white"/>`)),
   default: toUrl(svg("#7c7c8a")),
 };
 

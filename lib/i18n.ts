@@ -32,6 +32,9 @@ export interface Dict {
   noSteps: string;
   pause: string;
   resume: string;
+  stopRun: string;
+  stoppedSummary: string;
+  stoppedSummaryDone: string;
   waitingToStart: string;
   endedBeforePlan: string;
   seeReason: string;
@@ -199,6 +202,9 @@ const en: Dict = {
   noSteps: "no steps were run",
   pause: "Pause",
   resume: "Resume",
+  stopRun: "Stop",
+  stoppedSummary: "Stopped by the user. Steps not run: {n}.",
+  stoppedSummaryDone: "Stopped by the user.",
   waitingToStart: "waiting for agent to start…",
   endedBeforePlan: "The run ended before the agent produced a plan.",
   seeReason: "See the reason below.",
@@ -251,6 +257,7 @@ const en: Dict = {
     passed: { label: "Passed", sub: "all steps passed" },
     failed: { label: "Failed", sub: "some steps failed" },
     error: { label: "Error", sub: "agent crashed" },
+    stopped: { label: "Stopped", sub: "you stopped the run" },
   },
   home: {
     tagline: "Paste a test case. Watch it run.",
@@ -379,6 +386,9 @@ const ru: Dict = {
   noSteps: "шаги не выполнялись",
   pause: "Пауза",
   resume: "Продолжить",
+  stopRun: "Остановить",
+  stoppedSummary: "Остановлено пользователем. Не выполнено шагов: {n}.",
+  stoppedSummaryDone: "Остановлено пользователем.",
   waitingToStart: "ждём запуска агента…",
   endedBeforePlan: "Прогон завершился до того, как агент составил план.",
   seeReason: "Причина — ниже.",
@@ -431,6 +441,7 @@ const ru: Dict = {
     passed: { label: "Успешно", sub: "все шаги пройдены" },
     failed: { label: "Провален", sub: "часть шагов не прошла" },
     error: { label: "Ошибка", sub: "агент упал" },
+    stopped: { label: "Остановлен", sub: "вы остановили прогон" },
   },
   home: {
     tagline: "Вставьте тест-кейс. Смотрите, как он проходит.",

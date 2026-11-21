@@ -164,6 +164,8 @@ export async function callModel(
   messages: Anthropic.MessageParam[],
   /** Offer the tools that need eyes, and the part of the prompt about them. */
   vision: boolean,
+  /** Aborted when the run is stopped. */
+  signal?: AbortSignal,
 ): Promise<Anthropic.Message> {
   const system = systemPrompt(vision);
   const tools = toolsFor(vision);
@@ -171,18 +173,22 @@ export async function callModel(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       if (cfg.kind === "anthropic") {
-        return await client!.messages.create({
-          model: cfg.model,
-          max_tokens: 2048,
-          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-          messages,
-          tools,
-          tool_choice: { type: "auto" },
-        });
+        return await client!.messages.create(
+          {
+            model: cfg.model,
+            max_tokens: 2048,
+            system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+            messages,
+            tools,
+            tool_choice: { type: "auto" },
+          },
+          { signal },
+        );
       }
-      return await callOpenAICompatible(cfg, system, messages, tools);
+      return await callOpenAICompatible(cfg, system, messages, tools, signal);
     } catch (err) {
       lastErr = err;
+      if (signal?.aborted) break; // stopped: not something to try again
       const status = (err as { status?: number }).status;
       // retrying 4xx (except 429) is pointless: bad key/model/request
       if (status && status >= 400 && status < 500 && status !== 429) break;

@@ -36,7 +36,7 @@ export function startModel(script, { review } = {}) {
   const server = http.createServer((req, res) => {
     let raw = "";
     req.on("data", (c) => (raw += c));
-    req.on("end", () => {
+    req.on("end", async () => {
       res.writeHead(200, { "content-type": "application/json" });
       if (req.method !== "POST") return res.end('{"data":[{"id":"scripted"}]}');
       const body = JSON.parse(raw);
@@ -58,7 +58,8 @@ export function startModel(script, { review } = {}) {
       const step = script[turn++];
       let calls;
       try {
-        calls = step ? step(tree, call) : [call("finish", { status: "failed", summary: "The script ran out of turns." })];
+        // a turn may take its time (return a promise): a model that is slow to answer
+        calls = step ? await step(tree, call) : [call("finish", { status: "failed", summary: "The script ran out of turns." })];
       } catch (err) {
         calls = [call("finish", { status: "failed", summary: `Script error: ${err.message}` })];
       }

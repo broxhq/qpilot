@@ -2,7 +2,7 @@
 
 // The big status line at the top of a run.
 
-import { Check, CircleAlert, Loader2, Pause, X } from "lucide-react";
+import { Check, CircleAlert, Loader2, Pause, Square, X } from "lucide-react";
 import { type Dict } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +51,13 @@ const STATUS_CFG: Record<string, StatusCfg> = {
     color: "text-destructive",
     bg: "bg-destructive/10",
     border: "border-destructive/20",
+  },
+  // neither passed nor failed: it was not run to the end
+  stopped: {
+    icon: <Square className="size-3.5" strokeWidth={2.5} />,
+    color: "text-foreground/75",
+    bg: "bg-surface-hover",
+    border: "border-border",
   },
 };
 

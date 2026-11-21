@@ -223,6 +223,10 @@ When a run ends you can **Run again**, or **Edit test case** and rerun. Browser
 visibility is per run: **Run** stays headless, **Run with preview** lets you watch
 Chrome work.
 
+While a run is going, **Pause** holds it and **Stop** ends it: the browser is closed
+at once, the verdicts already given stay, and the remaining steps are marked as not
+run.
+
 </details>
 
 ## Models

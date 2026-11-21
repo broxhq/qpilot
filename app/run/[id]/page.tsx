@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, ChevronDown, ChevronRight, CircleAlert, Clock, Copy, Download, Loader2, Paperclip, Pause, Pencil, Play, RotateCw } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, CircleAlert, Clock, Copy, Download, Loader2, Paperclip, Pause, Pencil, Play, RotateCw, Square } from "lucide-react";
 import { type Run, type RunEvent } from "@/lib/types";
 import { updateFavicon, resetFavicon } from "@/lib/favicon";
 import { dict } from "@/lib/i18n";
@@ -83,6 +83,14 @@ export default function RunPage({ params }: PageProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: status === "paused" ? "resume" : "pause" }),
     }).catch(() => {});
+    setPauseBusy(false);
+  }
+
+  // Pause holds a run; this ends it: the browser is closed and the run is over
+  async function stopRun() {
+    if (!isActive) return;
+    setPauseBusy(true);
+    await fetch(`/api/run/${id}/stop`, { method: "POST" }).catch(() => {});
     setPauseBusy(false);
   }
 
@@ -257,6 +265,17 @@ export default function RunPage({ params }: PageProps) {
                   }
                 </Button>
               )}
+              {isActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={stopRun}
+                  disabled={pauseBusy}
+                  className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                >
+                  <Square className="size-3 mr-1" strokeWidth={2.5} />{t.stopRun}
+                </Button>
+              )}
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground font-mono tabular-nums">
                 <Clock className="size-3" />
                 {formatDuration(elapsed)}
@@ -279,7 +298,7 @@ export default function RunPage({ params }: PageProps) {
             <div
               className={cn(
                 "absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out",
-                status === "failed" || status === "error" ? "bg-destructive" : "bg-success",
+                status === "failed" || status === "error" ? "bg-destructive" : status === "stopped" ? "bg-border-strong" : "bg-success",
               )}
               style={{ width: `${progressPct}%` }}
             />

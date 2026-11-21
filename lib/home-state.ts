@@ -191,11 +191,11 @@ function waitForRun(id: string): Promise<RunStatus> {
       resolve(status);
     };
     const watch = setInterval(() => {
-      if (stopRequested) finish("paused");
+      if (stopRequested) finish("stopped");
     }, 150);
     es.onmessage = (msg) => {
       const status: RunStatus | undefined = JSON.parse(msg.data).run?.status;
-      if (stopRequested) finish("paused");
+      if (stopRequested) finish("stopped");
       else if (status && !ACTIVE.has(status)) finish(status);
     };
     es.onerror = () => finish("error");
@@ -237,13 +237,9 @@ export async function runBatch(headless: boolean): Promise<void> {
   update({ batch: { ...state.batch, running: false, finishedAt: Date.now() } });
 }
 
-/** Pauses the run in progress and skips the rest of the batch. */
+/** Stops the run in progress and skips the rest of the batch. */
 export function stopBatch(): void {
   stopRequested = true;
   if (!currentRun) return;
-  fetch(`/api/run/${currentRun}/pause`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "pause" }),
-  }).catch(() => {});
+  fetch(`/api/run/${currentRun}/stop`, { method: "POST" }).catch(() => {});
 }

@@ -251,6 +251,8 @@ export async function callOpenAICompatible(
   system: string,
   messages: Anthropic.MessageParam[],
   tools: Anthropic.Tool[],
+  /** Aborted when the run is stopped: the call is dropped instead of waited out. */
+  signal?: AbortSignal,
 ): Promise<Anthropic.Message> {
   const url = cfg.baseURL.replace(/\/+$/, "") + "/chat/completions";
 
@@ -260,7 +262,7 @@ export async function callOpenAICompatible(
       method: "POST",
       // a gateway that queues or hangs must not hold the run for minutes:
       // give up and let callModel retry
-      signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([AbortSignal.timeout(MODEL_TIMEOUT_MS), signal]) : AbortSignal.timeout(MODEL_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${cfg.apiKey}`,
@@ -279,6 +281,7 @@ export async function callOpenAICompatible(
   } catch (err) {
     // Node's network errors are bare ("fetch failed") — say what was unreachable,
     // otherwise the run just shows two useless words.
+    if (signal?.aborted) throw err;
     if ((err as Error).name === "TimeoutError") {
       throw new Error(`The model did not answer in ${MODEL_TIMEOUT_MS / 1000} s (${url}).`);
     }

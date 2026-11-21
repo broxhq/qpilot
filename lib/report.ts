@@ -70,7 +70,8 @@ export function reportHtml(
   t: Dict,
   shots: Record<number, string>,
 ): string {
-  const runColor = run.status === "passed" ? COLOR.pass : COLOR.fail;
+  // stopped is neither: grey, like a step that was not run
+  const runColor = run.status === "passed" ? COLOR.pass : run.status === "stopped" ? "#6b7280" : COLOR.fail;
 
   const stepHtml = (s: StepResult, displayNum: number) => {
     const failed = s.status === "fail" || s.status === "warn";

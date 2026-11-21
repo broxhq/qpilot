@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { cleanupUploads } from "../attachments";
 import { dict } from "../i18n";
-import { addStats, checkPause, getFiles, getRun, pushEvent, saveScreenshot } from "../store";
+import { addStats, checkPause, getFiles, getRun, isStopped, onStop, pushEvent, saveScreenshot } from "../store";
 import { NetworkMonitor } from "../network";
 import { loadSession, saveSession } from "../sessions";
 import { snapshot } from "./snapshot";
@@ -171,6 +171,14 @@ export async function runAgent(
   };
 
   const wakeLock = spawnWakeLock();
+  // Stop: the model call in flight is dropped and the browser closed at once —
+  // whatever the agent is in the middle of fails, and the loop sees why.
+  const halted = new AbortController();
+  onStop(runId, () => {
+    halted.abort();
+    void persist().finally(() => browser?.close().catch(() => {}));
+  });
+  const stopped = () => isStopped(runId);
 
   const cfg = resolveProvider();
   const client =
@@ -315,6 +323,7 @@ export async function runAgent(
 
     for (let iter = 0; iter < iterationLimit(); iter++) {
       await checkPause(runId);
+      if (stopped()) break;
       if (ledgerStep !== ctx.step.current) {
         ledgerStep = ctx.step.current;
         ledger = [];
@@ -324,8 +333,9 @@ export async function runAgent(
       const callStarted = Date.now();
       let response: Anthropic.Message;
       try {
-        response = await callModel(cfg, client, trimmed, ctx.vision);
+        response = await callModel(cfg, client, trimmed, ctx.vision, halted.signal);
       } catch (err) {
+        if (stopped()) break;
         // The endpoint took the vision check but refuses a real screenshot: go on
         // by the page tree instead of failing the run.
         const status = (err as { status?: number }).status ?? 0;
@@ -415,6 +425,7 @@ export async function runAgent(
       let cutOff = "";
 
       for (const [index, b] of toolUseBlocks.entries()) {
+        if (stopped()) break;
         const name = b.name;
         const input = (b.input ?? {}) as Record<string, unknown>;
         ctx.wantTree = index === lastPageAction;
@@ -622,7 +633,7 @@ export async function runAgent(
         messages.push({ role: "user", content: toolResults });
       }
 
-      if (finished) break;
+      if (finished || stopped()) break;
 
       if (cutOffInARow >= MAX_CUT_OFF_IN_A_ROW) {
         await ctx.reviewer.settle();
@@ -667,7 +678,8 @@ export async function runAgent(
       }
     }
 
-    await ctx.reviewer.settle();
+    // second opinions belong to a run that is still being judged
+    if (!stopped()) await ctx.reviewer.settle();
     // Loop exited by exhausting iterations (not via finish) — close the run
     // explicitly, else status stays running and logs hang in pending though the
     // browser is gone.

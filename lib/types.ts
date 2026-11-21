@@ -1,4 +1,5 @@
-export type RunStatus = "running" | "waiting" | "paused" | "passed" | "failed" | "error";
+// "stopped": the user ended the run. The verdicts given so far stand; the rest was not run.
+export type RunStatus = "running" | "waiting" | "paused" | "passed" | "failed" | "error" | "stopped";
 
 export type StepStatus = "queued" | "pass" | "fail" | "warn" | "skipped";
 

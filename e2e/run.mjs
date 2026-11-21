@@ -9,7 +9,7 @@
 // opinion objects to ends up as a warn?
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -93,9 +93,10 @@ async function follow(base, id, leaveWhenWaiting = false, answer) {
  * is called while the server is still up, and what it returns comes back as `probed`.
  * `abandon` leaves the run as soon as it asks the user something: the server is
  * then killed with the run still going. `answer` is what the user replies to
- * every question the agent asks.
+ * every question the agent asks. `during({ base, id, model })` runs alongside
+ * the run, from the moment it has started.
  */
-async function runWith(script, testCase, env = {}, review, { home: kept, probe, abandon, answer } = {}) {
+async function runWith(script, testCase, env = {}, review, { home: kept, probe, abandon, answer, during } = {}) {
   const model = await startModel(script, { review });
   const home = kept ?? mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", baseURL: model.url, apiKey: "e2e-key-0000000000", model: "scripted" }));
@@ -113,7 +114,10 @@ async function runWith(script, testCase, env = {}, review, { home: kept, probe, 
       body: JSON.stringify({ testCase }),
     });
     assert.equal(started.status, 200, "the run starts");
-    const { run, events } = await follow(base, (await started.json()).id, abandon, answer);
+    const id = (await started.json()).id;
+    const aside = during?.({ base, id, model });
+    const { run, events } = await follow(base, id, abandon, answer);
+    await aside;
     assert.ok(!/^(Script error|The script ran out)/.test(run.summary ?? ""), run.summary);
     // fetched now: the server is gone once this function returns
     const shots = {};
@@ -630,6 +634,64 @@ try {
     assert.equal(run.steps[0].evidence, "typed •••••• and then ••••••", "the whole codes are masked where the agent quotes them");
     assert.match(toolResults(model.requests.at(-1)).join("\n"), /OK: filled "7" into Digit 1/, "the model itself is told what it typed");
     console.log("✓ a code typed one character per box is masked in the log");
+  }
+
+  // ── 13. Stop ends a run for good: mid-thought, or while it waits for an answer ──
+  {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const until = async (cond) => { for (let i = 0; i < 200 && !(await cond()); i++) await sleep(50); };
+    const browsers = () => Number(execSync("pgrep -f playwright_chromiumdev_profile | wc -l || true").toString().trim());
+    const plan = (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the form — it opens", "Save — Saved is shown"] }] })];
+    const open = (_tree, call) => [call("navigate", { url: site.url })];
+    const text = "Stop\n1. Open the form.\n2. Save.";
+    const before = browsers();
+
+    // the model is thinking, and would be for a minute
+    let stoppedAt = 0;
+    let again;
+    const thinking = await runWith(
+      [plan, open, async (_tree, call) => {
+        await sleep(60_000);
+        return [call("finish", { status: "passed", summary: "Too late." })];
+      }],
+      text, { QPILOT_VISION: "0" }, undefined,
+      {
+        during: async ({ base, id, model }) => {
+          await until(() => model.requests.length === 3);
+          stoppedAt = Date.now();
+          const res = await fetch(`${base}/api/run/${id}/stop`, { method: "POST" });
+          assert.equal(res.status, 200, "a run in progress can be stopped");
+          await until(() => browsers() <= before);
+          again = (await fetch(`${base}/api/run/${id}/stop`, { method: "POST" })).status;
+        },
+      },
+    );
+    assert.equal(thinking.run.status, "stopped", "the run is over at once, not when the model answers");
+    assert.ok(Date.now() - stoppedAt < 15_000, "…within seconds");
+    assert.deepEqual(thinking.run.steps.map((s) => s.status), ["skipped", "skipped"], "steps without a verdict are marked as not run");
+    assert.match(thinking.run.summary, /Stopped by the user\. Steps not run: 2\./);
+    assert.ok(browsers() <= before, "its browser is closed");
+    assert.equal(again, 409, "a stopped run cannot be stopped again");
+    assert.equal(thinking.model.requests.length, 3, "and the model is not called any more");
+
+    // the agent asked something and nobody is going to answer
+    const waiting = await runWith(
+      [plan, open, (_tree, call) => [
+        call("report_step", { num: 1, expected: "it opens", evidence: "heading Banner form", status: "pass" }),
+        call("ask_user", { prompt: "A code?" }),
+      ]],
+      text, { QPILOT_VISION: "0" }, undefined,
+      {
+        during: async ({ base, id }) => {
+          await until(async () => (await (await fetch(`${base}/api/runs`)).json()).some((r) => r.id === id && r.status === "waiting"));
+          await fetch(`${base}/api/run/${id}/stop`, { method: "POST" });
+        },
+      },
+    );
+    assert.equal(waiting.run.status, "stopped", "a run waiting for an answer can be stopped too");
+    assert.deepEqual(waiting.run.steps.map((s) => s.status), ["pass", "skipped"], "the verdicts given before the stop stand");
+    assert.equal(waiting.run.pending, null, "the question is gone");
+    console.log("✓ Stop ends a run at once — while the model thinks or the agent waits — and closes its browser");
   }
 } catch (err) {
   failed = true;

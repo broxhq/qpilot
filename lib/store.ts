@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { StoredFile } from "./attachments";
-import { detectLanguage } from "./i18n";
+import { detectLanguage, dict } from "./i18n";
 import type { PendingQuestion, PlanGroup, Run, RunEvent, RunStats } from "./types";
 
 // All state for one run lives in a single entry: the Run, its emitter, pending
@@ -13,6 +13,8 @@ interface Entry {
   emitter: EventEmitter;
   waiters: Map<string, (answer: string) => void>;
   pauseGate: (() => void) | null;
+  /** Set by the agent: ends its work on this run at once (closes the browser, drops the model call). */
+  halt: (() => void) | null;
   screenshots: Map<number, Buffer>;
   files: StoredFile[];
 }
@@ -54,6 +56,7 @@ export function createRun(
     emitter: new EventEmitter(),
     waiters: new Map(),
     pauseGate: null,
+    halt: null,
     screenshots: new Map(),
     files,
   });
@@ -102,6 +105,8 @@ export function pushEvent(id: string, event: RunEvent): void {
   const entry = entries.get(id);
   if (!entry) return;
   const run = entry.run;
+  // a stopped run is over: whatever the agent was in the middle of does not reach it
+  if (run.status === "stopped") return;
   run.events.push(event);
 
   switch (event.kind) {
@@ -115,9 +120,12 @@ export function pushEvent(id: string, event: RunEvent): void {
     case "done":
       // Derive the verdict from steps, don't trust finish's argument:
       // any failed step => failed (the model can't "pass" a run with failures).
-      run.status = run.steps.some((s) => s.status === "fail")
-        ? "failed"
-        : (event.status ?? "passed");
+      run.status =
+        event.status === "stopped"
+          ? "stopped"
+          : run.steps.some((s) => s.status === "fail")
+            ? "failed"
+            : (event.status ?? "passed");
       event.status = run.status;
       run.summary = event.summary;
       run.pending = null;
@@ -197,6 +205,44 @@ export function answerQuestion(
   entry.waiters.delete(questionId);
   pushEvent(runId, { ts: Date.now(), kind: "answer", text: "(user answer received)" });
   resolver(answer);
+  return true;
+}
+
+// ── stop ─────────────────────────────────────────────────────────────────────
+
+/** The agent hands over how to end its work on the run. */
+export function onStop(id: string, halt: () => void): void {
+  const entry = entries.get(id);
+  if (entry) entry.halt = halt;
+}
+
+export const isStopped = (id: string) => entries.get(id)?.run.status === "stopped";
+
+/**
+ * Ends a run for good, whatever it is doing: thinking, acting, paused or
+ * waiting for an answer. Pause only holds the run — the browser stays open and
+ * the run stays "in progress" for ever; this lets go of everything. Steps that
+ * have a verdict keep it, the rest are marked as not run.
+ */
+export function stopRun(id: string): boolean {
+  const entry = entries.get(id);
+  if (!entry || !ACTIVE.has(entry.run.status)) return false;
+  const left = entry.run.steps.filter((s) => s.status === "queued").length;
+  const t = dict(entry.run.language);
+  pushEvent(id, {
+    ts: Date.now(),
+    kind: "done",
+    status: "stopped",
+    summary: left ? t.stoppedSummary.replace("{n}", String(left)) : t.stoppedSummaryDone,
+  });
+  // let the agent out of wherever it is held, then tell it to go
+  const gate = entry.pauseGate;
+  entry.pauseGate = null;
+  gate?.();
+  for (const answer of entry.waiters.values()) answer("");
+  entry.waiters.clear();
+  entry.halt?.();
+  entry.halt = null;
   return true;
 }
 
