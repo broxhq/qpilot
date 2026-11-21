@@ -54,7 +54,8 @@ async function waitFor(url, attempts = 60) {
 }
 
 /** Follows the run's event stream to the end; returns the final run and all events. */
-async function follow(base, id, leaveWhenWaiting = false) {
+async function follow(base, id, leaveWhenWaiting = false, answer) {
+  const answered = new Set();
   const res = await fetch(`${base}/api/run/${id}/stream`);
   const events = [];
   let run;
@@ -71,6 +72,15 @@ async function follow(base, id, leaveWhenWaiting = false) {
     }
     if (run && !["running", "waiting", "paused"].includes(run.status)) break;
     if (run?.status === "waiting" && leaveWhenWaiting) break;
+    // a person at the run page, typing what the agent asked for
+    if (run?.status === "waiting" && run.pending && answer !== undefined && !answered.has(run.pending.id)) {
+      answered.add(run.pending.id);
+      await fetch(`${base}/api/run/${id}/answer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: run.pending.id, answer }),
+      });
+    }
   }
   return { run, events };
 }
@@ -82,9 +92,10 @@ async function follow(base, id, leaveWhenWaiting = false) {
  * from one run to the next (it is then the caller's to remove); `probe(base)`
  * is called while the server is still up, and what it returns comes back as `probed`.
  * `abandon` leaves the run as soon as it asks the user something: the server is
- * then killed with the run still going.
+ * then killed with the run still going. `answer` is what the user replies to
+ * every question the agent asks.
  */
-async function runWith(script, testCase, env = {}, review, { home: kept, probe, abandon } = {}) {
+async function runWith(script, testCase, env = {}, review, { home: kept, probe, abandon, answer } = {}) {
   const model = await startModel(script, { review });
   const home = kept ?? mkdtempSync(join(tmpdir(), "qpilot-e2e-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", baseURL: model.url, apiKey: "e2e-key-0000000000", model: "scripted" }));
@@ -102,7 +113,7 @@ async function runWith(script, testCase, env = {}, review, { home: kept, probe, 
       body: JSON.stringify({ testCase }),
     });
     assert.equal(started.status, 200, "the run starts");
-    const { run, events } = await follow(base, (await started.json()).id, abandon);
+    const { run, events } = await follow(base, (await started.json()).id, abandon, answer);
     assert.ok(!/^(Script error|The script ran out)/.test(run.summary ?? ""), run.summary);
     // fetched now: the server is gone once this function returns
     const shots = {};
@@ -590,6 +601,35 @@ try {
       rmSync(home, { recursive: true, force: true });
     }
     console.log("✓ a sign-in is kept between runs — even from a run that never finished — cleared on request, and never kept when turned off");
+  }
+
+  // ── 12. a code typed one character per box is not readable in the log ────────
+  {
+    const digits = (label, code) => (tree, call) =>
+      [...code].map((d, i) => call("fill", { ref: ref(tree, new RegExp(`textbox "${label} ${i + 1}"`)), value: d, name: `${label} ${i + 1}` }));
+    const { run, events, model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Type both codes — they are accepted"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "otp" })],
+        digits("Digit", "7391"),
+        (_tree, call) => [call("ask_user", { prompt: "Enter the backup code", secret: true })],
+        digits("Part", "4826"),
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "they are accepted", evidence: "typed 7391 and then 4826", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Code\n1. Type both codes.",
+      { QPILOT_VISION: "0" }, undefined, { answer: "4826" },
+    );
+    const fills = events.filter((e) => e.kind === "action" && e.toolName === "fill");
+    assert.equal(fills.length, 8);
+    assert.deepEqual([...new Set(fills.map((e) => e.toolInput.value))], ["••••••"], "every character of a code is masked in the log: in boxes shaped like a code, and when it spells a secret the user gave");
+    const said = events.filter((e) => e.kind === "observation").map((e) => e.text).join("\n");
+    assert.doesNotMatch(said, /filled "\d"/, "…in what the tools reported as well");
+    assert.equal(run.steps[0].evidence, "typed •••••• and then ••••••", "the whole codes are masked where the agent quotes them");
+    assert.match(toolResults(model.requests.at(-1)).join("\n"), /OK: filled "7" into Digit 1/, "the model itself is told what it typed");
+    console.log("✓ a code typed one character per box is masked in the log");
   }
 } catch (err) {
   failed = true;

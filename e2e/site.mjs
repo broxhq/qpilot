@@ -140,6 +140,17 @@ if (!had) localStorage.setItem("token", "t-" + Date.now());
 document.getElementById("token").textContent = "token from an earlier visit: " + (had ? "yes" : "no");
 </script></body></html>`;
 
+// A code typed one character per box, the way login forms ask for it. The
+// boxes are plain text inputs: nothing says "one-time code" but their shape.
+// The second row has not even that — only the user knows it is a secret.
+const boxes = (label, attrs) => [1, 2, 3, 4].map((n) => `<input aria-label="${label} ${n}" ${attrs} style="width:2em">`).join(" ");
+const otp = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Code</title></head><body>
+<h1>Enter the code</h1>
+<div id="cells">${boxes("Digit", 'maxlength="1" inputmode="numeric"')}</div>
+<h2>Backup code</h2>
+<div id="parts">${boxes("Part", "")}</div>
+</body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -168,7 +179,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

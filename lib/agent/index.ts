@@ -16,7 +16,7 @@ import { callModel, compactHistory, dropScreenshots, withState } from "./model";
 import { captureEvidence, wirePage, withNotices } from "./page";
 import { watchFlashes } from "./flash";
 import { NUDGE } from "./prompt";
-import { isSecretField, redact, redactDeep, stripRefs } from "./redact";
+import { SECRET_MASK, isSecretField, redact, redactDeep, spells, stripRefs } from "./redact";
 import { Reviewer } from "./reviewer";
 import { canSee, forgetVision } from "./vision";
 import { spawnWakeLock } from "./wakelock";
@@ -280,6 +280,9 @@ export async function runAgent(
     let budgetStep = ctx.step.current;
     let actionsOnStep = 0;
     let cutOffInARow = 0;
+    // a code typed a character per field: what the last fills add up to
+    let spelled = "";
+    let cells = "";
     // what was done on the current step and what came of it, for the state note
     let ledger: string[] = [];
     let ledgerStep = ctx.step.current;
@@ -523,10 +526,25 @@ export async function runAgent(
           }
         }
 
-        // a value typed into a password field must not show up in the log
+        // What is typed into a password field must not show up in the log — and
+        // neither must a code typed one character per field: each character is
+        // too short to mask everywhere, so this very call is masked instead.
+        let piece = "";
         if (name === "fill" && typeof input.value === "string" && input.value) {
-          if (await isSecretField(ctx.page, input)) ctx.secrets.add(input.value);
+          const value = input.value;
+          const field = await isSecretField(ctx.page, input);
+          if (field === "secret") ctx.secrets.add(value);
+          spelled = field ? "" : spells(ctx.secrets, spelled, value);
+          if (field === "cell" || spelled) piece = value;
+          // the boxes of a code add up to a secret of their own: later mentions of the whole code are masked
+          cells = field === "cell" ? cells + value : "";
+          if (cells.length >= 4) ctx.secrets.add(cells);
+        } else if (PAGE_ACTIONS.has(name)) {
+          spelled = "";
+          cells = "";
         }
+        // the value as this call's own texts quote it
+        const veil = (text: string) => (piece ? text.split(`"${piece}"`).join(`"${SECRET_MASK}"`) : text);
 
         // set_plan is a run-level event, not tied to any specific step
         const stepNum = name === "set_plan" ? undefined : ctx.step.current;
@@ -534,7 +552,7 @@ export async function runAgent(
           ts: Date.now(),
           kind: "action",
           toolName: name,
-          toolInput: redactDeep(ctx, input),
+          toolInput: redactDeep(ctx, piece ? { ...input, value: SECRET_MASK } : input),
           stepNum,
         });
 
@@ -568,7 +586,7 @@ export async function runAgent(
           pushEvent(runId, {
             ts: Date.now(),
             kind: "observation",
-            text: redact(ctx, ret.observation ?? ret.content),
+            text: redact(ctx, veil(ret.observation ?? ret.content)),
             stepNum,
           });
           if (PAGE_ACTIONS.has(name)) await checkpoint(ctx.page.url());
@@ -594,7 +612,7 @@ export async function runAgent(
           pushEvent(runId, {
             ts: Date.now(),
             kind: "observation",
-            text: redact(ctx, `Error: ${message}`),
+            text: redact(ctx, veil(`Error: ${message}`)),
             stepNum,
           });
         }
