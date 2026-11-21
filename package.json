@@ -19,6 +19,7 @@
     "lint": "eslint . --max-warnings 0",
     "e2e": "node e2e/run.mjs",
     "live": "node e2e/live.mjs",
+    "demo": "node e2e/demo.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

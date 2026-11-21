@@ -20,3 +20,7 @@ CLAUDE.md
 
 # os
 .DS_Store
+
+# demo recordings: the film itself and rehearsals (see e2e/demo.mjs)
+docs/assets/*.webm
+docs/assets/demo-dry.*

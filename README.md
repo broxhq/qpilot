@@ -56,8 +56,16 @@ Getting an agent to click through a page is the easy part. The hard part is a
 - **Sizes and colours are measured, not eyeballed.** From a screenshot a model
   called a 46 px overlap of two buttons "no overlap". So position, size, overlap and
   colour are read from the browser, in pixels and RGB.
-- **A broken page fails the run.** The agent does not retry its way around a bug or
-  try other paths until something passes.
+- **What flashes and disappears is still seen.** An error toast lives a couple of
+  seconds, and an agent looks at the page once per action. So the page is watched
+  from inside: the message, and a screenshot taken while it was on screen, end up in
+  the report.
+- **"Every" means every.** A step about each country, checked on one of them, is not
+  a pass. It is recorded as a `warn` that names what was left unchecked.
+- **A broken page fails the run.** The agent does the preparation any tester would —
+  fills the required fields a step did not mention — and says so in the evidence. It
+  does not change what the step tests, retry its way around a bug, or try other paths
+  until something passes.
 
 How well the second check works so far, on one model and a small set: on 45 correct
 passes it raised no false objections; of 13 passes whose recorded facts were
@@ -68,7 +76,9 @@ deliberately altered it flagged 12.
 1. Paste a plain-text test case — the messy kind a PM writes in Confluence is fine.
 2. The agent opens Chrome and executes each step. It reads the page as an
    accessibility tree on every action, so nothing is stored that can go stale after
-   a redesign.
+   a redesign. With the page it gets what the action led to: the requests that went
+   out and how the server answered, new console errors, and — when a click did
+   nothing — which required fields are still empty.
 3. Results stream in live, step by step.
 4. Hits an OTP or a captcha? It pauses and asks you, then carries on. You sign in
    once: the next run starts already signed in.
@@ -179,7 +189,8 @@ can upload them, but never sees what is inside them.
 - A link that opens a new tab moves the agent to that tab; it can switch back.
 - Native `alert` / `confirm` / `prompt` dialogs are accepted by default. Write "press
   Cancel" in the step and the agent dismisses the dialog instead.
-- Whatever is typed into a password field is masked in the log and the report.
+- Whatever is typed into a password field is masked in the log and the report. So is
+  a one-time code, including one typed a digit per box.
 
 </details>
 
