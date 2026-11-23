@@ -47,9 +47,12 @@ const onScreen = (b: Box | null | undefined, size: Size) =>
  */
 async function hintUnnamed(page: Page, tree: string, boxes: Map<string, Box>, size: Size | null): Promise<string> {
   const bare = /^\s*- (?:button|link|img|menuitem|tab) \[ref=((?:f\d+)?e\d+)\]/;
-  // controls first: an <img> inside every button would use up the whole allowance
+  // controls first: an <img> inside every button would use up the whole allowance;
+  // and of those, the ones a person can see now
   const found = tree.split("\n").filter((l) => bare.test(l));
-  const refs = [...found.filter((l) => !/^\s*- img /.test(l)), ...found.filter((l) => /^\s*- img /.test(l))]
+  const seen = (l: string) => !!size && onScreen(boxes.get(l.match(bare)?.[1] ?? ""), size);
+  const inOrder = (lines: string[]) => [...lines.filter(seen), ...lines.filter((l) => !seen(l))];
+  const refs = [...inOrder(found.filter((l) => !/^\s*- img /.test(l))), ...inOrder(found.filter((l) => /^\s*- img /.test(l)))]
     .map((l) => l.match(bare)?.[1])
     .filter((r): r is string => !!r)
     .filter((r, i, all) => all.indexOf(r) === i)
@@ -111,6 +114,10 @@ const MAX_SNAPSHOT_CHARS = 16000;
 const SCREEN_OVERRUN = 3000;
 const TRUNCATED =
   "\n... (truncated. Elements past this point are NOT shown — including submit/footer buttons at the bottom of long forms. To act on something not listed here, use snapshot with `near='<text near it>'`, or scroll_to('<button text>') to bring it into a fresh snapshot. Scrolling alone won't reveal it.)";
+const SHORTENED =
+  "\n(Shortened to fit: where it says \"not shown\", part of a long block was left out. snapshot(near='<text in that block>') reads a block in full.)";
+// below this a block is not worth a share of its own: its first and last items are shown instead
+const MIN_SHARE = 240;
 const LINE_REF = /\[ref=((?:f\d+)?e\d+)\]/;
 const LINE_BOX = / \[box=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\]/;
 
@@ -138,6 +145,87 @@ function splitBoxes(raw: string): { tree: string; boxes: Map<string, Box> } {
     })
     .join("\n");
   return { tree, boxes };
+}
+
+/**
+ * Cuts a tree down to `budget` characters by taking from its biggest blocks.
+ *
+ * Cutting the end off instead takes whatever happens to be last in the DOM —
+ * and on a real portal that is the header, drawn through a portal after
+ * everything else: the bell the test case is about was not in the tree at all,
+ * while a carousel above it was there in full. So the room is shared out: a
+ * block that fits its share stays whole, a bigger one is cut the same way
+ * inside, and of a long list the first and the last items are kept.
+ */
+function fit(lines: string[], budget: number): { lines: string[]; cut: boolean } {
+  const n = lines.length;
+  const before: number[] = [0];
+  for (const l of lines) before.push(before[before.length - 1] + l.length + 1);
+  if (before[n] <= budget) return { lines, cut: false };
+
+  const indent = lines.map((l) => l.length - l.trimStart().length);
+  // kids[n] are the top-level lines
+  const kids: number[][] = Array.from({ length: n + 1 }, () => []);
+  const stack: number[] = [];
+  for (let i = 0; i < n; i++) {
+    while (stack.length && indent[stack[stack.length - 1]] >= indent[i]) stack.pop();
+    kids[stack.length ? stack[stack.length - 1] : n].push(i);
+    stack.push(i);
+  }
+  const end: number[] = new Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) end[i] = kids[i].length ? end[kids[i][kids[i].length - 1]] : i + 1;
+  const size = (i: number) => before[end[i]] - before[i];
+
+  const out: string[] = [];
+  let cut = false;
+  const whole = (i: number) => {
+    for (let j = i; j < end[i]; j++) out.push(lines[j]);
+  };
+  const emit = (i: number, room: number): void => {
+    if (i < n) {
+      if (size(i) <= room) return whole(i);
+      out.push(lines[i]);
+      room -= lines[i].length + 1;
+    }
+    const ks = kids[i];
+    if (ks.length === 0) return;
+    room = Math.max(room, 0);
+    // equal shares; what the small blocks do not use goes to the big ones
+    let left = room;
+    let count = ks.length;
+    let share = Infinity;
+    for (const s of ks.map(size).sort((a, b) => a - b)) {
+      if (s * count > left) {
+        share = Math.floor(left / count);
+        break;
+      }
+      left -= s;
+      count--;
+    }
+    if (share >= MIN_SHARE) {
+      for (const k of ks) emit(k, share);
+      return;
+    }
+    // too many for a share each (a long list): its first items, a count, its last ones
+    cut = true;
+    let head = 0;
+    let headRoom = Math.floor((room * 2) / 3);
+    while (head < ks.length && size(ks[head]) <= headRoom) headRoom -= size(ks[head++]);
+    let tail = ks.length;
+    let tailRoom = room - Math.floor((room * 2) / 3) + headRoom;
+    while (tail > head && size(ks[tail - 1]) <= tailRoom) tailRoom -= size(ks[--tail]);
+    for (let k = 0; k < head; k++) whole(ks[k]);
+    if (tail > head) out.push(`${" ".repeat(indent[ks[head]])}- … (${tail - head} more item(s) here are not shown)`);
+    for (let k = tail; k < ks.length; k++) whole(ks[k]);
+  };
+  emit(n, budget);
+  return { lines: out, cut };
+}
+
+/** A tree that is all on screen (or could not be placed) and still too long. */
+function fitTree(tree: string, budget: number): string {
+  const fitted = fit(tree.split("\n"), budget);
+  return fitted.cut ? fitted.lines.join("\n") + SHORTENED : tree;
 }
 
 /**
@@ -188,11 +276,14 @@ function screenFirst(tree: string, boxes: Map<string, Box>, size: Size): string 
       if (own[i] !== want) continue;
       for (let p = i; p >= 0 && !keep[p]; p = parent[p]) keep[p] = true;
     }
-    return lines.filter((_, i) => keep[i]).join("\n");
+    return lines.filter((_, i) => keep[i]);
   };
-  const on = part(true);
-  if (!on) return null;
-  let off = part(false);
+  const seen = part(true);
+  if (seen.length === 0) return null;
+  // what is on screen is never cut from its end: a header at the end of the DOM would go first
+  const fitted = fit(seen, MAX_SNAPSHOT_CHARS);
+  const on = fitted.lines.join("\n") + (fitted.cut ? SHORTENED : "");
+  let off = part(false).join("\n");
   const room = Math.max(SCREEN_OVERRUN, MAX_SNAPSHOT_CHARS - on.length);
   if (off.length > room) off = off.slice(0, room) + TRUNCATED;
   return [
@@ -280,11 +371,9 @@ export async function readPage(page: Page, near?: string): Promise<{ view: strin
   }
   const whole = tree;
   const size = page.viewportSize() ?? (await page.evaluate(() => ({ width: innerWidth, height: innerHeight })).catch(() => null));
-  if (size) tree = screenFirst(tree, boxes, size) ?? tree;
+  // hints first: they add to the length, and the cut below must count them in
   tree = await hintUnnamed(page, tree, boxes, size);
-  if (tree.length > MAX_SNAPSHOT_CHARS + SCREEN_OVERRUN) {
-    tree = tree.slice(0, MAX_SNAPSHOT_CHARS + SCREEN_OVERRUN) + TRUNCATED;
-  }
+  tree = (size && screenFirst(tree, boxes, size)) || fitTree(tree, MAX_SNAPSHOT_CHARS + SCREEN_OVERRUN);
 
   const wrap = (t: string) =>
     [
