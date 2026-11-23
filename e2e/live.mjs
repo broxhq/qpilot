@@ -59,6 +59,18 @@ const CASES = {
     expect: ["pass"],
     says: [/fresh notice/i],
   },
+  events: {
+    about: "an analytics event sent as a beacon, in a batch — and one that is not sent at all",
+    text: (url) => `Analytics\nURL: ${url}events\n1. Press "Open notices".\n   Expected result: the event Supplier_Notice_S is sent with the parameters idSupplier and tabName.\n2. Look at the same requests again.\n   Expected result: the event Supplier_Notice_Scroll was sent too.`,
+    expect: ["pass", "fail"],
+    says: [/Supplier_Notice_S/, /tabName|idSupplier/],
+  },
+  crowded: {
+    about: "an unnamed icon in a header at the end of the DOM, on a screen that holds more than the budget",
+    text: (url) => `Header\nURL: ${url}crowded\n1. Find the bell icon in the header: it is the second icon, it has no caption.\n   Expected result: the header has two icons.`,
+    expect: ["pass"],
+    says: [/icon|button|иконк/i],
+  },
   switches: {
     about: "a real defect: a click next to a switch toggles it",
     text: (url) => `Switches\nURL: ${url}\n1. Click 400 px to the right of the "Ad labelling" switch.\n   Expected result: the state of the switch does not change.`,
