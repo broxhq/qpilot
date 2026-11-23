@@ -85,12 +85,13 @@ export const networkTools: ToolDef[] = [
     schema: {
       name: "get_requests",
       description:
-        "The Network tab: recent XHR/fetch calls and page loads with method, URL, status, request body and JSON response. `find` matches the URL or the request body, so an RPC method name works too.",
+        "The Network tab on All: every request the page made — XHR/fetch, page loads, analytics beacons, images, scripts — with method, URL, status, request body and JSON response. `find` looks through URLs, query strings and request bodies in any letter case, so an event name or an RPC method works. Without find or type it lists API calls, page loads and beacons.",
       input_schema: {
         type: "object",
         properties: {
-          find: { type: "string", description: "Text in the URL or request body, e.g. 'orders' or 'getNotifications'." },
+          find: { type: "string", description: "Text in the URL or request body, e.g. 'orders', 'getNotifications' or an analytics event name." },
           method: { type: "string" },
+          type: { type: "string", description: "Only this kind: fetch, xhr, document, ping (sendBeacon), image, script… or all." },
           failed_only: { type: "boolean", description: "Only failed or 4xx/5xx." },
           limit: { type: "number", description: "Latest N matches, default 15." },
         },
@@ -100,6 +101,7 @@ export const networkTools: ToolDef[] = [
       const list = ctx.net.requests({
         find: String(input.find ?? input.url ?? "").trim() || undefined,
         method: typeof input.method === "string" ? input.method : undefined,
+        type: typeof input.type === "string" && input.type.trim() ? input.type.trim() : undefined,
         failedOnly: input.failed_only === true,
         limit: Number(input.limit) || undefined,
       });

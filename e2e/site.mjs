@@ -151,6 +151,40 @@ const otp = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>C
 <div id="parts">${boxes("Part", "")}</div>
 </body></html>`;
 
+// Opening the list tells analytics about it the way real pages do, none of it
+// through fetch: a beacon whose body is a Blob with a batch of events (the one
+// the test case asks about is far from the start), an image with the event in
+// its query string, and an image with the event packed in base64.
+const events = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Events</title></head><body>
+<h1>Notices</h1><button onclick="openNotices()">Open notices</button><ul id="list"></ul>
+<script>
+function openNotices() {
+  document.getElementById("list").innerHTML = "<li>Notice 1</li>";
+  const batch = { events: [
+    { name: "Page_View", pad: "x".repeat(3000) },
+    { name: "Supplier_Notice_S", idSupplier: 42, tabName: "new", token: "tok-123456" },
+  ] };
+  navigator.sendBeacon("/collect", new Blob([JSON.stringify(batch)], { type: "application/json" }));
+  new Image().src = "/px.gif?e=Notice_Pixel&props=" + encodeURIComponent(JSON.stringify({ idUser: 7 }));
+  new Image().src = "/b64.gif?data=" + btoa(JSON.stringify({ event: "Notice_Packed", cntNew: 3 }));
+}
+</script></body></html>`;
+
+// More on one screen than the model's budget holds — a grid of four hundred
+// small links — and, as on real portals, the header with its unnamed icons at
+// the END of the DOM. Cutting the tree at its end would cut the header off.
+const cells = Array.from({ length: 400 }, (_, i) => `<a href="#c${i + 1}" style="display:inline-block;width:68px;height:14px;font-size:9px;overflow:hidden">Cell ${i + 1}</a>`).join("");
+const below = Array.from({ length: 40 }, (_, i) => `<p style="height:40px">Below line ${i + 1}</p>`).join("");
+const crowded = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Crowded</title></head><body style="margin:0;padding-top:60px">
+<h1>Crowded</h1>
+<div id="grid" style="line-height:14px">${cells}</div>
+${below}
+<div id="portal"><div style="position:fixed;top:0;left:0;right:0;height:50px;background:#fff">
+  <button data-testid="menu-chat" style="width:36px;height:36px"><svg width="16" height="16"></svg></button>
+  <button data-testid="menu-bell" style="width:36px;height:36px"><svg width="16" height="16"></svg></button>
+</div></div>
+</body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -173,13 +207,18 @@ export function startSite() {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(req.url === "/account" ? account : signIn);
     }
+    // analytics endpoints: they answer with nothing, as real ones do
+    if (/^\/(collect|px\.gif|b64\.gif)/.test(req.url)) {
+      res.writeHead(204);
+      return res.end();
+    }
     if (req.url === "/api/save") {
       seen.push("save");
       res.writeHead(200, { "content-type": "application/json" });
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : req.url === "/events" ? events : req.url === "/crowded" ? crowded : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

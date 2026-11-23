@@ -193,7 +193,8 @@ async function outcome(ctx: ToolContext, unchanged: boolean | null): Promise<{ t
     brief = since.requests[0].replace(/^(\S+ \S+ → \S+).*$/s, "$1") + (since.total > 1 ? ` (+${since.total - 1})` : "") + (unchanged ? ", page unchanged" : "");
   }
   if (since.consoleErrors.length) lines.push(`New console errors: ${since.consoleErrors.join(" | ")}`);
-  if (since.total === 0 && unchanged && SUBMITS.has(ctx.tool)) {
+  // nothing but an analytics beacon went out: the form still did not submit
+  if (since.calls === 0 && unchanged && SUBMITS.has(ctx.tool)) {
     const fields = await blockingFields(ctx.page);
     if (fields.length) {
       lines.push(`Fields that look required but are empty or invalid (read from the markup — the form may be waiting for them): ${fields.join("; ")}`);

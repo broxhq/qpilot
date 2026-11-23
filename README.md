@@ -162,6 +162,12 @@ you give none), patch one field of the real response, fail or delay a request, g
 offline, and read back what the page actually sent and received. JavaScript console
 errors are noted on the step where they happened.
 
+The request log is the Network tab on **All**, not on Fetch/XHR: analytics events
+sent with `sendBeacon` or as an image are in it too, a search goes through URLs,
+query strings and whole request bodies in any letter case, and a step like
+"the event `Cart_Opened` is sent with `userId`" can be checked. WebSocket messages
+are not recorded.
+
 Tokens, passwords and cookies in request and response bodies are masked before the
 model or the report sees them.
 

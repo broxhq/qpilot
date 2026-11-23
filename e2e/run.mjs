@@ -693,6 +693,66 @@ try {
     assert.equal(waiting.run.pending, null, "the question is gone");
     console.log("✓ Stop ends a run at once — while the model thinks or the agent waits — and closes its browser");
   }
+
+  // ── 14. the request log is the Network tab on All: beacons and images, not only fetch ──
+  {
+    const find = (text) => (_tree, call) => [call("get_requests", { find: text })];
+    const { model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the notices — the event Supplier_Notice_S is sent"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "events" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Open notices"/), name: "Open notices" })],
+        find("supplier_notice_s"), find("Notice_Pixel"), find("idUser"), find("Notice_Packed"), find("No_Such_Event"),
+        (_tree, call) => [call("get_requests", {})],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "the event Supplier_Notice_S is sent", evidence: "POST /collect carries Supplier_Notice_S", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Events\n1. Open the notices.",
+      { QPILOT_VISION: "0" },
+    );
+    const results = toolResults(model.requests.at(-1));
+    const found = (text) => results.find((c) => c.includes("matching request") && c.includes(text)) ?? "";
+    assert.match(results.find((c) => c.startsWith("OK: clicked Open notices")) ?? "", /After this action: \d+ request\(s\) sent[^]*?POST [^\n]*\/collect \[ping\] → /, "a beacon is among what the action sent, named as one");
+    const beacon = found("/collect");
+    assert.match(beacon, /POST http[^\n]*\/collect \[ping\] → 204\n  sent after: click "Open notices"/, "a search in another letter case finds the beacon, with the action that caused it");
+    assert.match(beacon, /request body: …[^\n]*"name":"Supplier_Notice_S","idSupplier":42,"tabName":"new"[^\n]*shown around the match/, "the body of a Blob beacon is read, and shown around an event that lies past the first screenful");
+    assert.match(beacon, /"token":"•••"/, "…with its secrets masked");
+    assert.match(found("px.gif"), /GET http[^\n]*\/px\.gif\?e=Notice_Pixel[^\n]* \[image\] → 204/, "an event sent as an image is found by its query string");
+    assert.match(results.find((c) => c.includes("matching request") && c.includes("decoded:") && c.includes("idUser")) ?? "", /decoded: [^\n]*\{"idUser":7\}/, "a field inside a %-encoded query string is found, and shown decoded");
+    assert.match(found("b64.gif"), /decoded: \{"event":"Notice_Packed","cntNew":3\}/, "so is an event packed in base64");
+    assert.match(results.find((c) => c.startsWith("No matching requests")) ?? "", /^No matching requests for "No_Such_Event"\. Looked through all \d+ recorded request\(s\) of every kind/, "not found says what was looked through — every kind of request");
+    const listed = results.findLast((c) => c.includes("matching request")) ?? "";
+    assert.match(listed, /\/collect \[ping\]/, "a plain listing has the beacon");
+    assert.doesNotMatch(listed, /px\.gif/, "…and leaves static files out");
+    assert.match(listed, /\d+ static file\(s\)[^\n]*are left out — find searches them too/, "…saying so");
+    console.log("✓ the request log sees beacons and images, reads Blob bodies and searches them in full");
+  }
+
+  // ── 15. more on screen than fits: the cut takes from the biggest block, not from the end ──
+  {
+    const { model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the page — it opens"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "crowded" })],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "it opens", evidence: "heading Crowded", status: "pass" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Crowded\n1. Open the page.",
+      { QPILOT_VISION: "0" },
+    );
+    const opened = toolResults(model.requests.at(-1)).find((c) => c.startsWith("OK: navigated")) ?? "";
+    const [on, off] = opened.split("OFF SCREEN");
+    assert.match(on, /button \[ref=e\d+\] \(no name; data-testid=menu-bell[^)]*, at \d+,\d+\)/, "the header at the end of the DOM is there, though the screen holds more than the budget");
+    assert.match(on, /link "Cell 1" [^]*… \(\d+ more item\(s\) here are not shown\)[^]*link "Cell 400" /, "the long list gave up its middle: its first and last items stay, with a count between");
+    assert.match(on, /Shortened to fit/, "…and the tree says it was shortened and how to read a block in full");
+    assert.ok(on.length < 18_000, `the on-screen part keeps to the budget (${on.length})`);
+    assert.match(off ?? "", /Below line 1/, "what is off screen still follows");
+    console.log("✓ a screen that holds more than the budget keeps its header: the biggest block is shortened, not the end of the tree");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);

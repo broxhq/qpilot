@@ -8,7 +8,15 @@ import type { BrowserContext, Page, Request, Route } from "playwright";
 // request/response bodies routinely carry tokens and passwords.
 
 const MAX_LOG = 300;
+// Scripts, styles, images and fonts are kept apart: a page loads hundreds of
+// them, and they must not push the API calls out of the journal.
+const MAX_ASSETS = 500;
+const ASSET_TYPES = new Set(["script", "stylesheet", "image", "font", "media", "manifest", "texttrack"]);
+// What is printed of a body, and what is kept of it to search in: an analytics
+// batch names the event the tester asks about far past the first screenful.
 const MAX_BODY_CHARS = 1200;
+const MAX_KEPT_BODY = 40_000;
+const MAX_URL_CHARS = 500;
 const MAX_CAPTURE_BYTES = 200_000;
 const MAX_DELAY_MS = 30_000;
 const MAX_CONSOLE = 100;
@@ -60,8 +68,11 @@ interface LogEntry {
   status?: number;
   failed?: string;
   mocked?: boolean;
+  /** Masked and kept long (MAX_KEPT_BODY): searched in full, printed in part. */
   reqBody?: string;
   resBody?: string;
+  /** Everything `find` looks through, lower-cased; built on the first search. */
+  hay?: string;
   /** The agent's page action that preceded the request — what tells cause from coincidence. */
   after: string;
   /** Field paths of the real JSON response ("[].name", "user.id") — the shape a mock must match. */
@@ -70,9 +81,11 @@ interface LogEntry {
 }
 
 export interface RequestFilter {
-  /** Text in the URL or in the request body (RPC APIs name the method in the body). */
+  /** Text in the URL, its query string or the request body, in any letter case (RPC and analytics APIs name the method or event there). */
   find?: string;
   method?: string;
+  /** Resource type as the Network tab names it: fetch, xhr, document, ping, image, script… */
+  type?: string;
   failedOnly?: boolean;
   limit?: number;
 }
@@ -104,10 +117,10 @@ function maskDeep(v: unknown): unknown {
   return v;
 }
 
-/** Mask secrets in a request/response body and cut it to a readable size. */
-export function maskBody(raw: string | null | undefined): string | undefined {
+/** Mask secrets in a request/response body. */
+function maskText(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
-  let text = raw;
+  let text = raw.length > MAX_KEPT_BODY * 4 ? raw.slice(0, MAX_KEPT_BODY * 4) : raw;
   try {
     text = JSON.stringify(maskDeep(JSON.parse(raw)));
   } catch {
@@ -118,11 +131,59 @@ export function maskBody(raw: string | null | undefined): string | undefined {
     );
   }
   text = text
+    // a JSON fragment inside other text (a form field, a decoded query string)
+    .replace(/"([\w.-]+)"(\s*:\s*)"[^"]*"/g, (m, k: string, sep: string) => (SENSITIVE_KEY.test(k) ? `"${k}"${sep}"${MASK}"` : m))
     .replace(/\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*/g, MASK) // JWT
     .replace(/\bBearer\s+[\w.~+/-]+=*/gi, `Bearer ${MASK}`);
-  return text.length > MAX_BODY_CHARS
-    ? `${text.slice(0, MAX_BODY_CHARS)}… (${text.length} chars total)`
-    : text;
+  return text;
+}
+
+/** A text cut to a readable size — around `needle` when it lies past the cut. */
+function clip(text: string, max = MAX_BODY_CHARS, needle?: string): string {
+  if (text.length <= max) return text;
+  const at = needle ? text.toLowerCase().indexOf(needle) : -1;
+  if (at < 0 || at + needle!.length <= max) return `${text.slice(0, max)}… (${text.length} chars total)`;
+  const from = Math.max(0, at - Math.floor(max / 4));
+  return `…${text.slice(from, from + max)}${from + max < text.length ? "…" : ""} (${text.length} chars total, shown around the match)`;
+}
+
+/** Mask secrets in a request/response body and cut it to a readable size. */
+export function maskBody(raw: string | null | undefined): string | undefined {
+  const text = maskText(raw);
+  return text === undefined ? undefined : clip(text);
+}
+
+/** A request body as the journal keeps it: masked, long enough to search in. */
+function keptBody(raw: string | null | undefined): string | undefined {
+  const text = maskText(raw);
+  return text && text.length > MAX_KEPT_BODY ? text.slice(0, MAX_KEPT_BODY) : text;
+}
+
+function unescapeUrl(text: string): string {
+  if (!/%[0-9a-f]{2}/i.test(text)) return "";
+  try {
+    return decodeURIComponent(text.replace(/\+/g, " "));
+  } catch {
+    return text.replace(/%([0-9a-f]{2})/gi, (m, h: string) => (parseInt(h, 16) < 128 ? String.fromCharCode(parseInt(h, 16)) : m));
+  }
+}
+
+/**
+ * The same request the way a person would read it: the query string and form
+ * fields with %XX undone, and base64 values (how several analytics SDKs pack
+ * an event) decoded when what comes out is text.
+ */
+function decodedParts(e: LogEntry): string[] {
+  const out: string[] = [];
+  for (const raw of [e.url, e.reqBody ?? ""]) {
+    const plain = maskText(unescapeUrl(raw)) ?? "";
+    if (plain) out.push(plain);
+    for (const token of (plain || raw).match(/[A-Za-z0-9+/_-]{24,}={0,2}/g)?.slice(0, 12) ?? []) {
+      const text = Buffer.from(token.slice(0, MAX_KEPT_BODY), "base64").toString("utf-8");
+      if (text.length >= 12 && /^[\x20-\x7e\s\u00a0-\u04ff]+$/.test(text) && /[{"=:]/.test(text)) out.push(maskText(text) ?? "");
+    }
+  }
+  return out;
 }
 
 function maskUrl(url: string): string {
@@ -165,11 +226,37 @@ function deepMerge(base: unknown, patch: unknown): unknown {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** " [ping]" for anything that is not a plain API call or page load: how it was sent is part of the evidence. */
+const kindOf = (e: LogEntry) => (e.type === "fetch" || e.type === "xhr" || e.type === "document" ? "" : ` [${e.type}]`);
+
+// what a tester would call the type → what the browser calls it
+const TYPE_ALIASES: Record<string, string> = {
+  beacon: "ping",
+  sendbeacon: "ping",
+  img: "image",
+  pixel: "image",
+  js: "script",
+  css: "stylesheet",
+  style: "stylesheet",
+  doc: "document",
+};
+
+/** Everything `find` looks through, lower-cased: the URL and the body as sent, and as they read once decoded. */
+function haystack(e: LogEntry): string {
+  e.hay ??= [e.url, e.reqBody ?? "", ...decodedParts(e)].join("\n").toLowerCase();
+  return e.hay;
+}
+
 export class NetworkMonitor {
   private mocks: MockRule[] = [];
   private nextMockId = 1;
   private routed = false;
+  /** API calls, page loads, beacons — what the page said to a server. */
   private log: LogEntry[] = [];
+  /** Scripts, styles, images, fonts — searched by `find`, not listed by default. */
+  private assets: LogEntry[] = [];
+  /** Entries pushed out of the two lists: "not found" must say when it has not seen everything. */
+  private dropped = 0;
   private byRequest = new WeakMap<Request, LogEntry>();
   private mockedRequests = new WeakSet<Request>();
   private seq = 0;
@@ -253,18 +340,22 @@ export class NetworkMonitor {
    * anything happen, and what did the server answer" is the first thing a
    * tester looks at when a click seems to do nothing.
    */
-  sinceMark(): { total: number; requests: string[]; consoleErrors: string[] } {
+  sinceMark(): { total: number; calls: number; requests: string[]; consoleErrors: string[] } {
     const sent = this.log.filter((e) => e.n > this.markSeq);
     // what the action submitted says more than what the page fetched afterwards
     const ordered = [...sent.filter((e) => e.method !== "GET"), ...sent.filter((e) => e.method === "GET")];
     const requests = ordered.slice(0, MAX_DIGEST_REQUESTS).map((e) => {
       const outcome = e.failed ? `FAILED (${e.failed})` : e.status !== undefined ? String(e.status) : "pending";
       const telling = e.method !== "GET" || e.failed || (e.status ?? 0) >= 400;
-      const body = telling && e.resBody ? ` ${e.resBody.replace(/\s+/g, " ").slice(0, DIGEST_BODY_CHARS)}` : "";
-      return `${e.method} ${shortUrl(e.url)} → ${outcome}${e.mocked ? " [mocked]" : ""}${body}`;
+      // a beacon is answered with nothing: what it carried is what there is to read
+      const said = e.type === "ping" ? e.reqBody : telling ? e.resBody : undefined;
+      const body = said ? ` ${said.replace(/\s+/g, " ").slice(0, DIGEST_BODY_CHARS)}` : "";
+      return `${e.method} ${shortUrl(e.url)}${kindOf(e)} → ${outcome}${e.mocked ? " [mocked]" : ""}${body}`;
     });
     return {
       total: sent.length,
+      // a beacon is the page telling its analytics about the click, not the page answering it
+      calls: sent.filter((e) => e.type !== "ping").length,
       requests,
       consoleErrors: this.consoleErrors.slice(this.markConsole, this.markConsole + 3).map((t) => t.slice(0, 200)),
     };
@@ -281,24 +372,70 @@ export class NetworkMonitor {
       if (m.type() === "error") push(m.text());
     });
     page.on("pageerror", (err) => push(`Uncaught: ${err.message}`));
+    void this.wireBodies(page);
+  }
+
+  /**
+   * Playwright has no body for a request whose payload is a Blob — which is how
+   * sendBeacon is usually called. The browser does: ask it over the debugging
+   * protocol, for the requests that came without one.
+   */
+  private async wireBodies(page: Page): Promise<void> {
+    try {
+      const cdp = await this.context.newCDPSession(page);
+      await cdp.send("Network.enable");
+      cdp.on("Network.requestWillBeSent", (e) => {
+        const { request } = e;
+        if (!request.hasPostData || request.postData !== undefined) return;
+        // a file upload is not something to read back
+        const type = Object.entries(request.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
+        if (/^multipart\//i.test(String(type))) return;
+        cdp.send("Network.getRequestPostData", { requestId: e.requestId }).then(
+          ({ postData }) => this.lateBody(request.method, request.url, postData),
+          () => {},
+        );
+      });
+    } catch {
+      // not Chromium, or the page is already gone: such bodies stay unread
+    }
+  }
+
+  private lateBody(method: string, url: string, body: string, retry = true): void {
+    const masked = maskUrl(url);
+    const entry = [...this.log].reverse().find((e) => e.method === method && e.url === masked && e.reqBody === undefined);
+    if (entry) {
+      entry.reqBody = keptBody(body);
+      entry.hay = undefined;
+    } else if (retry) {
+      // the protocol answered before Playwright announced the request
+      setTimeout(() => this.lateBody(method, url, body, false), 250);
+    }
   }
 
   private onRequest(req: Request): void {
     const type = req.resourceType();
-    // the Network tab filtered to what a tester looks at: API calls and page loads
-    if (type !== "fetch" && type !== "xhr" && type !== "document") return;
+    const url = req.url();
+    if (url.startsWith("data:") || url.startsWith("blob:")) return;
+    // The Network tab on "All". It used to be the Fetch/XHR filter, and an
+    // analytics event sent with sendBeacon or as an image was "not sent".
+    const asset = ASSET_TYPES.has(type);
     const entry: LogEntry = {
       n: ++this.seq,
       method: req.method(),
-      url: maskUrl(req.url()),
+      url: maskUrl(url),
       type,
-      reqBody: maskBody(req.postData()),
+      reqBody: asset ? undefined : keptBody(req.postData()),
       after: this.marker,
     };
-    this.inflight.set(req, Date.now());
+    // only an API call or a page load is worth waiting for before reading the page
+    if (type === "fetch" || type === "xhr" || type === "document") this.inflight.set(req, Date.now());
     this.byRequest.set(req, entry);
-    this.log.push(entry);
-    if (this.log.length > MAX_LOG) this.log.shift();
+    const list = asset ? this.assets : this.log;
+    list.push(entry);
+    if (list.length > (asset ? MAX_ASSETS : MAX_LOG)) {
+      list.shift();
+      this.dropped++;
+    }
   }
 
   // ── mocks ───────────────────────────────────────────────────────────────────
@@ -465,18 +602,29 @@ export class NetworkMonitor {
   // ── reading back ────────────────────────────────────────────────────────────
 
   requests(filter: RequestFilter = {}): string {
-    const match = filter.find ? urlMatcher(filter.find) : null;
-    const inBody = (e: LogEntry) => !!filter.find && !!e.reqBody?.includes(filter.find);
+    const find = filter.find?.trim();
+    const needle = find?.toLowerCase();
+    // a pattern with * is a glob over the URL, as in mock_request; plain text is looked for everywhere
+    const glob = find?.includes("*") ? urlMatcher(find) : null;
     const method = filter.method?.toUpperCase();
+    const type = filter.type ? (TYPE_ALIASES[filter.type.toLowerCase()] ?? filter.type.toLowerCase()) : undefined;
     const limit = Math.min(Math.max(1, filter.limit ?? 15), 40);
-    const hits = this.log.filter(
+    // a search or a named type goes through everything; a plain listing is the calls
+    const everything = !!find || !!type;
+    const pool = everything ? [...this.log, ...this.assets].sort((a, b) => a.n - b.n) : this.log;
+    const hits = pool.filter(
       (e) =>
-        (!match || match(e.url) || inBody(e)) &&
+        (!needle || (glob ? glob(e.url) : haystack(e).includes(needle))) &&
         (!method || e.method === method) &&
+        (!type || type === "all" || e.type === type) &&
         (!filter.failedOnly || e.failed || (e.status ?? 0) >= 400),
     );
+    const total = this.log.length + this.assets.length;
+    const lost = this.dropped
+      ? ` ${this.dropped} older request(s) are no longer kept (the journal holds the latest ${MAX_LOG} calls and ${MAX_ASSETS} static files).`
+      : "";
     if (hits.length === 0) {
-      return `No matching requests (${this.log.length} recorded in total). Only XHR/fetch calls and page loads are recorded.`;
+      return `No matching requests${find ? ` for "${find}"` : ""}. Looked through all ${everything ? total : this.log.length} recorded request(s)${everything ? " of every kind — XHR/fetch, page loads, beacons (sendBeacon), images, scripts, styles" : " (static files left out: add find or type to include them)"}: the URL, the query string and the request body, in any letter case, %-encoding and base64 undone. Not recorded: WebSocket messages.${lost}`;
     }
     const shown = hits.slice(-limit);
     const lines = shown.map((e) => {
@@ -485,14 +633,22 @@ export class NetworkMonitor {
         : e.status !== undefined
           ? String(e.status)
           : "pending";
-      const head = `#${e.n} ${e.method} ${e.url} → ${outcome}${e.mocked ? " [mocked]" : ""}`;
+      const head = `#${e.n} ${e.method} ${clip(e.url, MAX_URL_CHARS, needle)}${kindOf(e)} → ${outcome}${e.mocked ? " [mocked]" : ""}`;
       const parts = [head, `  sent after: ${e.after}`];
-      if (e.reqBody) parts.push(`  request body: ${e.reqBody}`);
+      if (e.reqBody) parts.push(`  request body: ${clip(e.reqBody, MAX_BODY_CHARS, needle)}`);
+      // a %-encoded query string or a base64 value is no reading matter: show what it says
+      if (needle && !glob) {
+        const where = decodedParts(e).find((t) => t.toLowerCase().includes(needle));
+        if (where) parts.push(`  decoded: ${clip(where, MAX_BODY_CHARS, needle)}`);
+      }
       if (e.resBody) parts.push(`  response body: ${e.resBody}`);
       return parts.join("\n");
     });
     const more = hits.length > shown.length ? `\n(${hits.length - shown.length} earlier matches not shown — narrow the filter)` : "";
-    return `${hits.length} matching request(s), oldest first. "sent after" is your action that preceded the request — a request sent after navigate, or before the step's own action, was not caused by that action:\n${lines.join("\n")}${more}`;
+    const scope = everything
+      ? ""
+      : ` Listed: API calls, page loads and beacons; ${this.assets.length} static file(s) (scripts, images, styles) are left out — find searches them too, type="image" lists them.`;
+    return `${hits.length} matching request(s), oldest first.${scope}${lost} "sent after" is your action that preceded the request — a request sent after navigate, or before the step's own action, was not caused by that action:\n${lines.join("\n")}${more}`;
   }
 
   /** Errors logged since the previous call — for the per-step note in the report. */
