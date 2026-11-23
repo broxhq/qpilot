@@ -1,4 +1,5 @@
 import type { BrowserContext, Page, Request, Route } from "playwright";
+import type { RequestProof } from "./types";
 
 // What a manual tester does with Charles / the DevTools Network tab, for the
 // agent: substitute or patch responses, fail or slow requests down, and read
@@ -17,6 +18,9 @@ const ASSET_TYPES = new Set(["script", "stylesheet", "image", "font", "media", "
 const MAX_BODY_CHARS = 1200;
 const MAX_KEPT_BODY = 40_000;
 const MAX_URL_CHARS = 500;
+// a request attached to a step as proof: its body in full when it is of a readable size
+const MAX_PROOF_BODY = 6000;
+const MAX_PROOF_URL = 1500;
 const MAX_CAPTURE_BYTES = 200_000;
 const MAX_DELAY_MS = 30_000;
 const MAX_CONSOLE = 100;
@@ -226,6 +230,32 @@ function deepMerge(base: unknown, patch: unknown): unknown {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A body laid out for reading: JSON indented when it is JSON and fits, cut otherwise. */
+function readable(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  try {
+    const laid = JSON.stringify(JSON.parse(text), null, 2);
+    if (laid.length <= MAX_PROOF_BODY) return laid;
+  } catch {}
+  return clip(text, Math.floor(MAX_PROOF_BODY / 2));
+}
+
+/** Does the evidence of a step speak of this request: its address, its path or the last word of it? */
+function mentioned(e: LogEntry, said: string): boolean {
+  try {
+    const u = new URL(e.url);
+    const path = u.pathname.toLowerCase();
+    const last = path.split("/").filter(Boolean).pop() ?? "";
+    return (
+      (path.length > 1 && said.includes(u.host.toLowerCase() + path)) ||
+      (path.length >= 6 && said.includes(path)) ||
+      (last.length >= 8 && said.includes(last))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** " [ping]" for anything that is not a plain API call or page load: how it was sent is part of the evidence. */
 const kindOf = (e: LogEntry) => (e.type === "fetch" || e.type === "xhr" || e.type === "document" ? "" : ` [${e.type}]`);
 
@@ -255,6 +285,13 @@ export class NetworkMonitor {
   private log: LogEntry[] = [];
   /** Scripts, styles, images, fonts — searched by `find`, not listed by default. */
   private assets: LogEntry[] = [];
+  /**
+   * Requests the model has been shown since the last verdict: what its evidence
+   * can be about. Emptied when the first request is shown after a verdict, not
+   * at the verdict itself — two steps reported in a row speak of the same ones.
+   */
+  private shown = new Set<number>();
+  private judged = false;
   /** Entries pushed out of the two lists: "not found" must say when it has not seen everything. */
   private dropped = 0;
   private byRequest = new WeakMap<Request, LogEntry>();
@@ -345,12 +382,13 @@ export class NetworkMonitor {
     // what the action submitted says more than what the page fetched afterwards
     const ordered = [...sent.filter((e) => e.method !== "GET"), ...sent.filter((e) => e.method === "GET")];
     const requests = ordered.slice(0, MAX_DIGEST_REQUESTS).map((e) => {
+      this.show(e);
       const outcome = e.failed ? `FAILED (${e.failed})` : e.status !== undefined ? String(e.status) : "pending";
       const telling = e.method !== "GET" || e.failed || (e.status ?? 0) >= 400;
       // a beacon is answered with nothing: what it carried is what there is to read
       const said = e.type === "ping" ? e.reqBody : telling ? e.resBody : undefined;
       const body = said ? ` ${said.replace(/\s+/g, " ").slice(0, DIGEST_BODY_CHARS)}` : "";
-      return `${e.method} ${shortUrl(e.url)}${kindOf(e)} → ${outcome}${e.mocked ? " [mocked]" : ""}${body}`;
+      return `#${e.n} ${e.method} ${shortUrl(e.url)}${kindOf(e)} → ${outcome}${e.mocked ? " [mocked]" : ""}${body}`;
     });
     return {
       total: sent.length,
@@ -359,6 +397,14 @@ export class NetworkMonitor {
       requests,
       consoleErrors: this.consoleErrors.slice(this.markConsole, this.markConsole + 3).map((t) => t.slice(0, 200)),
     };
+  }
+
+  private show(e: LogEntry): void {
+    if (this.judged) {
+      this.shown.clear();
+      this.judged = false;
+    }
+    this.shown.add(e.n);
   }
 
   /** Console errors are per page — call for every page (tab) of the run. */
@@ -628,6 +674,7 @@ export class NetworkMonitor {
     }
     const shown = hits.slice(-limit);
     const lines = shown.map((e) => {
+      this.show(e);
       const outcome = e.failed
         ? `FAILED (${e.failed})`
         : e.status !== undefined
@@ -649,6 +696,34 @@ export class NetworkMonitor {
       ? ""
       : ` Listed: API calls, page loads and beacons; ${this.assets.length} static file(s) (scripts, images, styles) are left out — find searches them too, type="image" lists them.`;
     return `${hits.length} matching request(s), oldest first.${scope}${lost} "sent after" is your action that preceded the request — a request sent after navigate, or before the step's own action, was not caused by that action:\n${lines.join("\n")}${more}`;
+  }
+
+  /**
+   * The requests a verdict rests on, to be attached to the step: the ones the
+   * agent named by number, or — when it named none — the ones it was shown on
+   * this step and speaks of in its evidence. A page screenshot proves nothing
+   * about a field missing from a request body; the request itself does.
+   */
+  proof(numbers: number[], evidence: string, max = 3): RequestProof[] {
+    const seen = this.shown;
+    this.judged = true;
+    const all = [...this.log, ...this.assets].sort((a, b) => a.n - b.n);
+    let picked = numbers.map((n) => all.find((e) => e.n === n)).filter((e): e is LogEntry => !!e);
+    if (picked.length === 0 && evidence) {
+      const said = evidence.toLowerCase();
+      picked = all.filter((e) => seen.has(e.n) && mentioned(e, said));
+    }
+    return picked.slice(-max).map((e) => ({
+      method: e.method,
+      url: clip(e.url, MAX_PROOF_URL),
+      type: e.type,
+      status: e.status,
+      failed: e.failed,
+      mocked: e.mocked,
+      after: e.after,
+      requestBody: readable(e.reqBody),
+      responseBody: readable(e.resBody),
+    }));
   }
 
   /** Errors logged since the previous call — for the per-step note in the report. */

@@ -190,7 +190,7 @@ async function outcome(ctx: ToolContext, unchanged: boolean | null): Promise<{ t
   } else {
     const more = since.total > since.requests.length ? ` (+${since.total - since.requests.length} more — get_requests lists them)` : "";
     lines.push(`After this action: ${since.total} request(s) sent${more}:\n${since.requests.map((r) => `  ${r}`).join("\n")}`);
-    brief = since.requests[0].replace(/^(\S+ \S+ → \S+).*$/s, "$1") + (since.total > 1 ? ` (+${since.total - 1})` : "") + (unchanged ? ", page unchanged" : "");
+    brief = since.requests[0].replace(/^#\d+ (\S+ \S+ → \S+).*$/s, "$1") + (since.total > 1 ? ` (+${since.total - 1})` : "") + (unchanged ? ", page unchanged" : "");
   }
   if (since.consoleErrors.length) lines.push(`New console errors: ${since.consoleErrors.join(" | ")}`);
   // nothing but an analytics beacon went out: the form still did not submit

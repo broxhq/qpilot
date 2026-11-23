@@ -1,6 +1,6 @@
 import type { Dict } from "./i18n";
 import { groupSteps } from "./steps";
-import type { Run, StepResult } from "./types";
+import type { RequestProof, Run, StepResult } from "./types";
 import { formatDuration } from "./utils";
 
 // The run as something a tester can take away: Markdown for pasting into a
@@ -25,6 +25,13 @@ function counts(run: Run, t: Dict): string {
 
 const statusLabel = (run: Run, t: Dict) => t.status[run.status]?.label ?? run.status;
 
+/** "POST https://… → 200 [ping]" */
+export function requestLine(r: RequestProof): string {
+  const outcome = r.failed ? `FAILED (${r.failed})` : r.status !== undefined ? String(r.status) : "…";
+  const kind = r.type === "fetch" || r.type === "xhr" || r.type === "document" ? "" : ` [${r.type}]`;
+  return `${r.method} ${r.url} → ${outcome}${kind}${r.mocked ? " [mocked]" : ""}`;
+}
+
 export function reportMarkdown(run: Run, elapsedMs: number, t: Dict): string {
   const out: string[] = [
     `# ${run.title}`,
@@ -42,6 +49,13 @@ export function reportMarkdown(run: Run, elapsedMs: number, t: Dict): string {
       if (failed && s.expected) out.push(`   - ${t.expected}: ${s.expected}`);
       if (s.evidence) out.push(failed ? `   - ${t.actual}: ${s.evidence}` : `   - ${s.evidence}`);
       if (s.reviewer) out.push(`   - ⚠ ${t.reviewerObjects}: ${s.reviewer}`);
+      for (const r of s.requests ?? []) {
+        out.push(`   - ${t.proofRequests}: \`${requestLine(r)}\` (${t.proofSentAfter}: ${r.after})`);
+        const block = (label: string, text: string) =>
+          out.push(`     ${label}:`, "     ```", ...text.split("\n").map((l) => `     ${l}`), "     ```");
+        if (r.requestBody) block(t.proofRequestBody, r.requestBody);
+        if (r.responseBody) block(t.proofResponseBody, r.responseBody);
+      }
       if (s.mockUnverified) out.push(`   - ⚠ ${t.mockUnverified}`);
       if (s.consoleErrors?.length) {
         out.push(`   - ${t.consoleErrors}: ${s.consoleErrors.join(" | ")}`);
@@ -94,11 +108,26 @@ export function reportHtml(
     const shot = shots[s.num]
       ? `<img src="${shots[s.num]}" alt="${esc(t.reportScreenshot)} ${displayNum}">`
       : "";
+    const body = (label: string, text?: string) =>
+      text ? `<div class="lbl">${esc(label)}</div><pre>${esc(text)}</pre>` : "";
+    const proof = s.requests?.length
+      ? `<div class="reqs"><div class="lbl">${esc(t.proofRequests)}</div>${s.requests
+          .map(
+            (r) =>
+              `<div class="req"><div class="line"${r.failed || (r.status ?? 0) >= 400 ? ` style="color:${COLOR.fail}"` : ""}>${esc(
+                requestLine(r),
+              )}</div><div class="after">${esc(t.proofSentAfter)}: ${esc(r.after)}</div>${
+                body(t.proofRequestBody, r.requestBody) || `<div class="after">${esc(t.proofRequestBody)}: ${esc(t.proofNoBody)}</div>`
+              }${body(t.proofResponseBody, r.responseBody)}</div>`,
+          )
+          .join("")}</div>`
+      : "";
     return `<li class="step" style="border-left-color:${COLOR[s.status] ?? "#6b7280"}">
   <div class="head"><span class="badge" style="color:${COLOR[s.status] ?? "#6b7280"}">${esc(
     (t.stepStatus[s.status] ?? s.status).toUpperCase(),
   )}</span><span class="num">${String(displayNum).padStart(2, "0")}</span>${esc(s.description)}</div>
   ${passNote}${rows.length ? `<dl>${rows.join("")}</dl>` : ""}
+  ${proof}
   ${shot}
 </li>`;
   };
@@ -136,6 +165,12 @@ export function reportHtml(
   img { display: block; max-width: 100%; margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 6px; }
   .summary, pre { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-top: 20px; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #374151; }
+  .reqs { margin-top: 10px; }
+  .lbl { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; margin-top: 8px; }
+  .req { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px 10px; margin-top: 6px; background: #f9fafb; }
+  .req .line { font: 12.5px/1.5 ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+  .req .after { font-size: 12px; color: #6b7280; }
+  .req pre { margin-top: 4px; padding: 8px 10px; background: #fff; }
 </style>
 </head>
 <body>

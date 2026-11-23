@@ -42,6 +42,12 @@ export interface Dict {
   expected: string;
   actual: string;
   consoleErrors: string;
+  /** Heading of the requests attached to a step as proof, and the labels inside one. */
+  proofRequests: string;
+  proofSentAfter: string;
+  proofRequestBody: string;
+  proofResponseBody: string;
+  proofNoBody: string;
   mockUnverified: string;
   reviewerObjects: string;
   /** Evidence of a step the framework closed itself; {n} = actions spent. */
@@ -212,6 +218,11 @@ const en: Dict = {
   expected: "Expected",
   actual: "Actual",
   consoleErrors: "Console errors during this step",
+  proofRequests: "Requests behind the verdict",
+  proofSentAfter: "sent after",
+  proofRequestBody: "Request body",
+  proofResponseBody: "Response",
+  proofNoBody: "no body",
   reviewerObjects: "The agent passed this step, a second check disagrees",
   stepCutOff: "Not completed: the agent spent {n} actions on this step without reaching a verdict, so the step was closed automatically. Check it by hand.",
   notChecked: "Not checked",
@@ -396,6 +407,11 @@ const ru: Dict = {
   expected: "Ожидалось",
   actual: "Фактически",
   consoleErrors: "Ошибки в консоли на этом шаге",
+  proofRequests: "Запросы, на которых основан вердикт",
+  proofSentAfter: "отправлен после",
+  proofRequestBody: "Тело запроса",
+  proofResponseBody: "Ответ",
+  proofNoBody: "без тела",
   reviewerObjects: "Агент засчитал шаг, повторная проверка не согласна",
   stepCutOff: "Не выполнен: агент потратил {n} действий на этот шаг и не вынес вердикт, поэтому шаг закрыт автоматически. Проверьте его вручную.",
   notChecked: "Не проверено",

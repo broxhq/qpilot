@@ -168,6 +168,11 @@ query strings and whole request bodies in any letter case, and a step like
 "the event `Cart_Opened` is sent with `userId`" can be checked. WebSocket messages
 are not recorded.
 
+A verdict about a request comes with the request itself: method, address, status
+and the whole body are attached to the step — in the run page and in both reports —
+next to the screenshot. A picture of the page does not show that a field is missing
+from a request body; the body does.
+
 Tokens, passwords and cookies in request and response bodies are masked before the
 model or the report sees them.
 

@@ -3,6 +3,24 @@ export type RunStatus = "running" | "waiting" | "paused" | "passed" | "failed" |
 
 export type StepStatus = "queued" | "pass" | "fail" | "warn" | "skipped";
 
+/**
+ * A request the verdict of a step rests on, as the request log has it: what a
+ * tester would show from the Network tab. Secrets are masked before it gets here.
+ */
+export interface RequestProof {
+  method: string;
+  url: string;
+  /** Resource type as the Network tab names it: fetch, xhr, ping (sendBeacon), image… */
+  type: string;
+  status?: number;
+  failed?: string;
+  mocked?: boolean;
+  /** The agent's action that preceded the request. */
+  after: string;
+  requestBody?: string;
+  responseBody?: string;
+}
+
 export interface StepResult {
   num: number;
   description: string;
@@ -11,6 +29,8 @@ export interface StepResult {
   expected?: string;
   evidence?: string;
   screenshot?: string;
+  /** The requests the evidence is about — attached in full, next to the screenshot. */
+  requests?: RequestProof[];
   /** JS console errors logged while the step ran — shown as a note, never changes the status. */
   consoleErrors?: string[];
   /** A mock with a guessed response shape answered a request on this step. */

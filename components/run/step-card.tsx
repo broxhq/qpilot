@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { LogLine, isVisibleLog } from "@/components/run/log";
+import { RequestProofs } from "@/components/run/requests";
 
 const STEP_ACCENT: Record<string, { border: string; badge: string; bg: string }> = {
   queued:  { border: "border-l-border-strong",       badge: "bg-surface-hover text-subtle",     bg: ""                      },
@@ -111,6 +112,10 @@ export function StepCard({
           <p className="px-4 pb-3 -mt-1 text-[11.5px] leading-relaxed text-warning">
             ⚠ {t.reviewerObjects}: <span className="font-mono">{step.reviewer}</span>
           </p>
+        )}
+
+        {step.requests && step.requests.length > 0 && (
+          <RequestProofs requests={step.requests} open={verdictFailed} t={t} />
         )}
 
         {step.mockUnverified && (

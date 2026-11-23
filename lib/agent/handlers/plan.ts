@@ -2,11 +2,11 @@
 
 import { askQuestion, getRun, pushEvent, saveScreenshot, setPlan } from "../../store";
 import { dict } from "../../i18n";
-import { type PlanGroup } from "../../types";
+import { type PlanGroup, type RequestProof } from "../../types";
 import { type ReportStatus } from "../context";
 import { captureEvidence } from "../page";
 import { FLASH_NOTE } from "../flash";
-import { redact, stripRefs } from "../redact";
+import { redact, redactDeep, stripRefs } from "../redact";
 import { type ToolDef } from "../tool";
 
 export const planTools: ToolDef[] = [
@@ -142,6 +142,12 @@ export const planTools: ToolDef[] = [
             description:
               "What you actually saw, one or two sentences: a verbatim quote from the page, a request and its status, a dialog text. For a 'changed / did not change' check give the value before and after for every element checked. For a step about several items, one clause per item.",
           },
+          requests: {
+            type: "array",
+            items: { type: "number" },
+            description:
+              "When the evidence is a request (sent / not sent, a field in its body, its status): the #numbers of up to 3 such requests, from get_requests or \"After this action\". They are attached to the step in full — quote only the telling part in evidence.",
+          },
           not_checked: {
             type: "array",
             items: { type: "string" },
@@ -214,6 +220,13 @@ export const planTools: ToolDef[] = [
       // console errors since the previous step: a note for the reader, not a verdict —
       // third-party scripts make most consoles noisy, so they never change the status
       const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
+      // the requests the verdict is about go with the step: a screenshot of the
+      // page does not show that a field is missing from a request body
+      const named = (Array.isArray(input.requests) ? input.requests : input.requests == null ? [] : [input.requests])
+        .map((v) => Number(String(v).replace(/^#/, "")))
+        .filter((n) => Number.isInteger(n))
+        .slice(0, 5);
+      const requests = ctx.net.proof(named, String(input.evidence ?? "")).map((r) => redactDeep(ctx, r) as RequestProof);
       const step = {
         num,
         // the card keeps the tester's wording from the plan unless the model says the step went differently
@@ -225,6 +238,7 @@ export const planTools: ToolDef[] = [
         expected: input.expected ? clean(input.expected) : undefined,
         evidence: input.evidence || coverage ? `${input.evidence ? clean(input.evidence) : ""}${coverage}`.trim() : undefined,
         screenshot,
+        requests: requests.length ? requests : undefined,
         consoleErrors: consoleErrors.length ? consoleErrors : undefined,
         // a made-up response body whose shape was never compared to a real one
         // answered a request on this step — the reader should know before trusting a fail

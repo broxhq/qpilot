@@ -479,7 +479,7 @@ try {
     assert.doesNotMatch(silent[0], /ON SCREEN NOW/, "a page that is all on screen is given as one tree");
     assert.match(silent[0], /Fields that look required but are empty or invalid.*"Title \*" — marked required \(\*\) and empty/, "…and names the field the form is waiting for");
     assert.match(results.find((c) => c.includes("This exact action has been done 2 times")) ?? "", /^Error: not executed/, "the third identical press is not made");
-    assert.match(results.find((c) => c.includes("/api/save → 200")) ?? "", /After this action: 1 request\(s\) sent:\n  POST [^\n]*\/api\/save → 200/, "a click that did send a request says which and how it was answered");
+    assert.match(results.find((c) => c.includes("/api/save → 200")) ?? "", /After this action: 1 request\(s\) sent:\n  #\d+ POST [^\n]*\/api\/save → 200/, "a click that did send a request says which and how it was answered");
     assert.equal(site.seen.filter((s) => s === "save").length - savesBefore, 1, "the record was saved once");
     // where the run stands is told every turn, with what was tried and what came of it
     const state = model.requests[5].messages.at(-1);
@@ -697,24 +697,29 @@ try {
   // ── 14. the request log is the Network tab on All: beacons and images, not only fetch ──
   {
     const find = (text) => (_tree, call) => [call("get_requests", { find: text })];
-    const { model } = await runWith(
+    const { run, model } = await runWith(
       [
-        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the notices — the event Supplier_Notice_S is sent"] }] })],
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the notices — the event Supplier_Notice_S is sent", "The pixel — Notice_Pixel is sent with a user name"] }] })],
         (_tree, call) => [call("navigate", { url: site.url + "events" })],
         (tree, call) => [call("click", { ref: ref(tree, /button "Open notices"/), name: "Open notices" })],
         find("supplier_notice_s"), find("Notice_Pixel"), find("idUser"), find("Notice_Packed"), find("No_Such_Event"),
         (_tree, call) => [call("get_requests", {})],
-        (_tree, call) => [
-          call("report_step", { num: 1, expected: "the event Supplier_Notice_S is sent", evidence: "POST /collect carries Supplier_Notice_S", status: "pass" }),
-          call("finish", { status: "passed", summary: "Done." }),
+        // the first verdict names its request by number; the second only speaks of one in its evidence
+        (_tree, call, results) => [
+          call("report_step", {
+            num: 1, expected: "the event Supplier_Notice_S is sent", evidence: "the beacon carries Supplier_Notice_S", status: "pass",
+            requests: [Number(results.find((c) => c.includes("matching request") && c.includes("/collect")).match(/#(\d+) POST [^\n]*\/collect/)[1])],
+          }),
+          call("report_step", { num: 2, expected: "Notice_Pixel is sent with a user name", evidence: "GET /px.gif?e=Notice_Pixel has idUser but no user name", status: "fail" }),
+          call("finish", { status: "failed", summary: "Done." }),
         ],
       ],
-      "Events\n1. Open the notices.",
+      "Events\n1. Open the notices.\n2. The pixel.",
       { QPILOT_VISION: "0" },
     );
     const results = toolResults(model.requests.at(-1));
     const found = (text) => results.find((c) => c.includes("matching request") && c.includes(text)) ?? "";
-    assert.match(results.find((c) => c.startsWith("OK: clicked Open notices")) ?? "", /After this action: \d+ request\(s\) sent[^]*?POST [^\n]*\/collect \[ping\] → /, "a beacon is among what the action sent, named as one");
+    assert.match(results.find((c) => c.startsWith("OK: clicked Open notices")) ?? "", /After this action: \d+ request\(s\) sent[^]*?#\d+ POST [^\n]*\/collect \[ping\] → /, "a beacon is among what the action sent, named as one, with its number");
     const beacon = found("/collect");
     assert.match(beacon, /POST http[^\n]*\/collect \[ping\] → 204\n  sent after: click "Open notices"/, "a search in another letter case finds the beacon, with the action that caused it");
     assert.match(beacon, /request body: …[^\n]*"name":"Supplier_Notice_S","idSupplier":42,"tabName":"new"[^\n]*shown around the match/, "the body of a Blob beacon is read, and shown around an event that lies past the first screenful");
@@ -727,7 +732,18 @@ try {
     assert.match(listed, /\/collect \[ping\]/, "a plain listing has the beacon");
     assert.doesNotMatch(listed, /px\.gif/, "…and leaves static files out");
     assert.match(listed, /\d+ static file\(s\)[^\n]*are left out — find searches them too/, "…saying so");
-    console.log("✓ the request log sees beacons and images, reads Blob bodies and searches them in full");
+
+    // the request a verdict is about goes with the step, in full: that is the proof, not a picture of the page
+    const [named, spoken] = run.steps.map((s) => s.requests ?? []);
+    assert.equal(named.length, 1, "the request the agent named by number is attached to the step");
+    assert.deepEqual([named[0].method, named[0].type, named[0].status, named[0].after], ["POST", "ping", 204, 'click "Open notices"']);
+    assert.match(named[0].url, /\/collect$/);
+    assert.match(named[0].requestBody, /\n      "name": "Supplier_Notice_S",\n      "idSupplier": 42,\n      "tabName": "new",\n      "token": "•••"/, "its body is whole and laid out for reading, secrets masked");
+    assert.equal(spoken.length, 1, "a request the evidence speaks of is attached even when the agent gave no number");
+    assert.deepEqual([spoken[0].method, spoken[0].type], ["GET", "image"]);
+    assert.match(spoken[0].url, /\/px\.gif\?e=Notice_Pixel/);
+    assert.ok(run.steps[1].screenshot, "…next to the screenshot of the page, not instead of it");
+    console.log("✓ the request log sees beacons and images, reads Blob bodies and searches them in full; the requests behind a verdict are attached to the step");
   }
 
   // ── 15. more on screen than fits: the cut takes from the biggest block, not from the end ──

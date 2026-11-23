@@ -3,7 +3,7 @@
 // so the agent loop, the tools and the report can be checked without a real model.
 //
 // A turn is a function of the latest page tree (to pick refs out of it) that
-// returns the tool calls to make.
+// returns the tool calls to make. It is also given every tool result so far.
 
 import http from "node:http";
 
@@ -59,7 +59,7 @@ export function startModel(script, { review } = {}) {
       let calls;
       try {
         // a turn may take its time (return a promise): a model that is slow to answer
-        calls = step ? await step(tree, call) : [call("finish", { status: "failed", summary: "The script ran out of turns." })];
+        calls = step ? await step(tree, call, results) : [call("finish", { status: "failed", summary: "The script ran out of turns." })];
       } catch (err) {
         calls = [call("finish", { status: "failed", summary: `Script error: ${err.message}` })];
       }

@@ -83,6 +83,8 @@ async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | nul
     screenshot = `/api/run/${runId}/shot/${num}`;
   }
   const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
+  // the requests seen on this step are not evidence for the next one
+  ctx.net.proof([], "");
   const step = {
     num,
     description: planned.description,
