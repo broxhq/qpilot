@@ -45,7 +45,7 @@ const onScreen = (b: Box | null | undefined, size: Size) =>
  * names, the icon's file or sprite id, a link target — and where the control is
  * on screen: "the third icon from the right" is how a test case names it.
  */
-async function hintUnnamed(page: Page, tree: string, boxes: Map<string, Box>, size: Size | null): Promise<string> {
+async function hintUnnamed(page: Page, tree: string, boxes: Map<string, Box>, size: Size | null, max = MAX_HINTED): Promise<string> {
   const bare = /^\s*- (?:button|link|img|menuitem|tab) \[ref=((?:f\d+)?e\d+)\]/;
   // controls first: an <img> inside every button would use up the whole allowance;
   // and of those, the ones a person can see now
@@ -56,7 +56,7 @@ async function hintUnnamed(page: Page, tree: string, boxes: Map<string, Box>, si
     .map((l) => l.match(bare)?.[1])
     .filter((r): r is string => !!r)
     .filter((r, i, all) => all.indexOf(r) === i)
-    .slice(0, MAX_HINTED);
+    .slice(0, max);
   if (refs.length === 0) return tree;
 
   const hints = await Promise.all(
@@ -384,4 +384,76 @@ export async function readPage(page: Page, near?: string): Promise<{ view: strin
       t,
     ].join("\n");
   return { view: wrap(tree), full: wrap(whole) };
+}
+
+const MAX_FOUND = 20;
+// a search looks at every unnamed control: the one asked for may be the 80th
+const MAX_HINTED_SEARCH = 300;
+// ancestors worth naming when saying where an element sits
+const PLACES = /^(banner|navigation|main|contentinfo|complementary|dialog|alertdialog|region|form|search|list|table|row|tabpanel|toolbar|menu|menubar|tree|grid|article)$/;
+
+/**
+ * Finds elements of the page by a text and says where each one is.
+ *
+ * Reading the tree block by block to find one control is how a run lost half
+ * a minute looking for a bell: the agent knew what it wanted and had no way to
+ * ask for it. This searches the whole tree — names, texts, and the markup hints
+ * of every unnamed control — and hands back the refs.
+ */
+export async function searchPage(page: Page, query: string): Promise<string> {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return "Error: text is required — what to look for on the page.";
+  let read: { tree: string; boxes: Map<string, Box> };
+  try {
+    read = splitBoxes(await page.locator("body").ariaSnapshot({ mode: "ai", boxes: true, timeout: 5000 }));
+  } catch (err) {
+    return `Error: the page could not be read (${err instanceof Error ? err.message : String(err)}).`;
+  }
+  const size = page.viewportSize() ?? (await page.evaluate(() => ({ width: innerWidth, height: innerHeight })).catch(() => null));
+  const lines = (await hintUnnamed(page, read.tree, read.boxes, size, MAX_HINTED_SEARCH)).split("\n");
+  const indent = lines.map((l) => l.length - l.trimStart().length);
+  const parent: number[] = new Array(lines.length).fill(-1);
+  const stack: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    while (stack.length && indent[stack[stack.length - 1]] >= indent[i]) stack.pop();
+    parent[i] = stack.length ? stack[stack.length - 1] : -1;
+    stack.push(i);
+  }
+  const refOf = (i: number) => lines[i].match(LINE_REF)?.[1] ?? null;
+  const shown = (i: number) => lines[i].trim().replace(/^- /, "").replace(/:$/, "");
+
+  // a text line has no ref of its own: what can be acted on is the element around it
+  const hits = new Map<number, string | null>();
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].replace(LINE_REF, "").toLowerCase().includes(wanted)) continue;
+    let at = i;
+    while (at >= 0 && !refOf(at)) at = parent[at];
+    if (at < 0 || hits.has(at)) continue;
+    hits.set(at, at === i ? null : shown(i));
+  }
+  if (hits.size === 0) {
+    return `No element matches "${query.trim()}" — the whole page tree was searched (${lines.length} lines: names, texts, and the markup hints of unnamed controls). The tree has no colours and no pictures: an icon with neither a name nor a telling hint is found by its place on screen.`;
+  }
+
+  const place = (i: number) => {
+    const trail: string[] = [];
+    for (let p = parent[i]; p >= 0 && trail.length < 3; p = parent[p]) {
+      const m = lines[p].match(/^\s*- (\S+?)(?: "([^"]*)")?(?:[ :]|$)/);
+      if (m && (m[2] || PLACES.test(m[1]))) trail.unshift(m[2] ? `${m[1]} "${m[2].slice(0, 40)}"` : m[1]);
+    }
+    return trail.join(" > ");
+  };
+  const visible = (i: number) => !!size && onScreen(read.boxes.get(refOf(i)!), size);
+  const ordered = [...hits.keys()].sort((a, b) => Number(visible(b)) - Number(visible(a)) || a - b);
+  const out = ordered.slice(0, MAX_FOUND).map((i) => {
+    const box = read.boxes.get(refOf(i)!);
+    const where = visible(i)
+      ? /\bat \d+,\d+\)/.test(lines[i]) ? "on screen" : `on screen at ${Math.round(box!.x + box!.w / 2)},${Math.round(box!.y + box!.h / 2)}`
+      : "off screen";
+    const inside = place(i);
+    const via = hits.get(i);
+    return `- ${shown(i)} — ${where}${inside ? `; in: ${inside}` : ""}${via ? `; matched: ${via.slice(0, 120)}` : ""}`;
+  });
+  const more = ordered.length > MAX_FOUND ? `\n(${ordered.length - MAX_FOUND} more — make the text more specific)` : "";
+  return `${ordered.length} element(s) match "${query.trim()}", those on screen first. Pass a ref to click / hover / fill:\n${out.join("\n")}${more}`;
 }

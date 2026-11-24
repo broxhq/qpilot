@@ -37,6 +37,11 @@ export interface StepResult {
   mockUnverified?: boolean;
   /** The agent said pass, the second opinion objected (see lib/agent/reviewer.ts): why. The status is then warn. */
   reviewer?: string;
+  /**
+   * The framework closed the step: the agent spent its actions without a verdict.
+   * Such a step is a warn — nothing was shown to be broken — but the run is not a pass.
+   */
+  cutOff?: boolean;
   group?: string;
 }
 

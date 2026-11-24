@@ -1,7 +1,8 @@
 // The same pages as the e2e run, but with the real model from your settings.
 //
-//   npm run build && npm run live            all cases
+//   npm run build && npm run live            all cases, three runs each
 //   npm run live -- form toast               only these
+//   npm run live -- --runs 1                 a quick look: one run each
 //
 // e2e proves the framework does what it should with a model that follows a
 // script. It says nothing about how a real model reads a page and decides. This
@@ -10,6 +11,11 @@
 // the verdict against the expected one, the evidence, how many actions and model
 // calls it took. Run it before and after a change to the prompt or the tools,
 // and with a second model to tell what is the model and what is the framework.
+//
+// Every case is run several times (--runs, three by default): a model answers a
+// little differently each time, and one run of eight cases cannot tell a change
+// that helped from luck. What counts is how many cases were right EVERY time;
+// "right at least once" is printed next to it to show how much is luck.
 //
 // It uses ~/.qpilot/config.json (or the QPILOT_* variables), spends real model
 // calls, and is not part of CI.
@@ -120,7 +126,10 @@ async function follow(base, id) {
   return { run, events };
 }
 
-const wanted = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+const args = process.argv.slice(2);
+const runsAt = args.indexOf("--runs");
+const RUNS = Math.max(1, Number(runsAt >= 0 ? args[runsAt + 1] : 3) || 3);
+const wanted = args.filter((a, i) => !a.startsWith("-") && !(runsAt >= 0 && i === runsAt + 1));
 const names = wanted.length ? wanted : Object.keys(CASES);
 for (const n of names) if (!CASES[n]) throw new Error(`No case "${n}". There are: ${Object.keys(CASES).join(", ")}`);
 
@@ -130,31 +139,52 @@ const base = `http://127.0.0.1:${port}`;
 // these pages need no sign-in, and a test site must not end up among your saved sign-ins
 const app = spawn("node", [SERVER], { env: { QPILOT_SESSIONS: "0", ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1" }, stdio: ["ignore", "ignore", "inherit"] });
 let wrong = 0;
+const tally = [];
 try {
   await waitFor(`${base}/api/runs`);
   for (const name of names) {
     const c = CASES[name];
-    const started = Date.now();
-    const res = await fetch(`${base}/api/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ testCase: c.text(site.url) }) });
-    if (!res.ok) throw new Error(`The run did not start: ${res.status} ${await res.text()}`);
-    const { run, events, asked } = await follow(base, (await res.json()).id);
-    const got = run.steps.map((s) => s.status);
-    const evidence = run.steps.map((s) => s.evidence ?? "").join(" ");
-    const right = !asked && JSON.stringify(got) === JSON.stringify(c.expect) && c.says.every((re) => re.test(evidence));
-    if (!right) wrong++;
-    const actions = events.filter((e) => e.kind === "action").map((e) => e.toolName);
-    console.log(`\n${right ? "✓" : "✗"} ${name} — ${c.about}`);
-    console.log(`  verdict: ${got.join(", ") || "(no steps)"}   expected: ${c.expect.join(", ")}${asked ? "   (the agent asked the user and was stopped)" : ""}`);
-    for (const s of run.steps) console.log(`  ${s.num}. [${s.status}] ${s.evidence ?? ""}${s.reviewer ? `\n     reviewer: ${s.reviewer}` : ""}`);
-    if (run.status === "error" || !run.steps.length) console.log(`  run: ${run.status} — ${run.summary ?? events.findLast((e) => e.kind === "error")?.text ?? ""}`);
-    console.log(`  ${actions.length} tool calls (${actions.join(" ")})`);
-    console.log(`  ${run.stats?.calls ?? "?"} model calls, ${Math.round((Date.now() - started) / 1000)} s`);
-    const thoughts = events.filter((e) => e.kind === "thought").map((e) => e.text.replace(/\s+/g, " ").slice(0, 200));
-    if (thoughts.length) console.log(`  said: ${thoughts.join(" | ")}`);
+    console.log(`\n${name} — ${c.about}`);
+    console.log(`  expected: ${c.expect.join(", ")}`);
+    let right = 0;
+    for (let n = 1; n <= RUNS; n++) {
+      const started = Date.now();
+      const res = await fetch(`${base}/api/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ testCase: c.text(site.url) }) });
+      if (!res.ok) throw new Error(`The run did not start: ${res.status} ${await res.text()}`);
+      const { run, events, asked } = await follow(base, (await res.json()).id);
+      const got = run.steps.map((s) => s.status);
+      const evidence = run.steps.map((s) => s.evidence ?? "").join(" ");
+      const verdict = JSON.stringify(got) === JSON.stringify(c.expect);
+      const reason = c.says.every((re) => re.test(evidence));
+      const ok = !asked && verdict && reason;
+      // a right verdict for the wrong reason is not a right run: say which it was
+      const why = ok ? "" : asked ? "asked the user and was stopped" : !verdict ? "wrong verdict" : "right verdict, wrong reason";
+      if (ok) right++;
+      else wrong++;
+      const actions = events.filter((e) => e.kind === "action").map((e) => e.toolName);
+      console.log(`  ${ok ? "✓" : "✗"} run ${n}: ${got.join(", ") || "(no steps)"}${why ? ` — ${why}` : ""} · ${actions.length} tool calls, ${run.stats?.calls ?? "?"} model calls, ${Math.round((Date.now() - started) / 1000)} s`);
+      // the details of a run are worth reading only when it went wrong, or once per case
+      if (!ok || n === 1) {
+        for (const s of run.steps) console.log(`      ${s.num}. [${s.status}] ${s.evidence ?? ""}${s.reviewer ? `\n         reviewer: ${s.reviewer}` : ""}`);
+        if (run.status === "error" || !run.steps.length) console.log(`      run: ${run.status} — ${run.summary ?? events.findLast((e) => e.kind === "error")?.text ?? ""}`);
+        console.log(`      tools: ${actions.join(" ")}`);
+      }
+      if (!ok) {
+        const thoughts = events.filter((e) => e.kind === "thought").map((e) => e.text.replace(/\s+/g, " ").slice(0, 200));
+        if (thoughts.length) console.log(`      said: ${thoughts.join(" | ")}`);
+      }
+    }
+    tally.push({ name, right });
+    console.log(`  ${right} of ${RUNS} runs right`);
   }
 } finally {
   app.kill();
   site.close();
 }
-console.log(`\n${names.length - wrong} of ${names.length} right`);
+const every = tally.filter((t) => t.right === RUNS).length;
+const once = tally.filter((t) => t.right > 0).length;
+console.log(`\n${names.length} cases × ${RUNS} runs`);
+console.log(`right every time:   ${every} of ${names.length}${every < names.length ? ` (not: ${tally.filter((t) => t.right < RUNS).map((t) => `${t.name} ${t.right}/${RUNS}`).join(", ")})` : ""}`);
+console.log(`right at least once: ${once} of ${names.length}`);
+console.log(`runs right:          ${tally.reduce((n, t) => n + t.right, 0)} of ${names.length * RUNS}`);
 process.exit(wrong ? 1 : 0);

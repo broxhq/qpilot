@@ -157,6 +157,7 @@ export interface Dict {
     clickingAt: string;
     hoveringAt: string;
     readingBlock: string;
+    searchingPage: string;
     clicking: string;
     clickingElement: string;
     filling: string;
@@ -346,6 +347,7 @@ const en: Dict = {
     clickingAt: "Clicking at",
     hoveringAt: "Hovering at",
     readingBlock: "Reading block",
+    searchingPage: "Searching the page for",
     clicking: "Clicking",
     clickingElement: "Clicking element",
     filling: "Filling",
@@ -535,6 +537,7 @@ const ru: Dict = {
     clickingAt: "Кликает в точку",
     hoveringAt: "Наводит на точку",
     readingBlock: "Читает блок",
+    searchingPage: "Ищет на странице",
     clicking: "Кликает",
     clickingElement: "Кликает по элементу",
     filling: "Заполняет",

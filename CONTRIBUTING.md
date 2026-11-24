@@ -83,9 +83,11 @@ your settings, on the same local pages the e2e run uses. Each case has a known r
 verdict and stands for one way the agent has gone wrong on real sites: a form that
 refuses in silence, an error shown only by a toast, a step about every item, an unnamed
 icon. It prints the verdict against the expected one, the evidence, and how many actions
-and model calls each case took. Run it before and after your change — and with a second
-model, if you want to tell what is the model and what is the framework. It spends real
-model calls and is not part of CI.
+and model calls each case took. Every case is run three times (`--runs N` changes that):
+a model answers a little differently each time, so what counts is how many cases were
+right every time, not on one lucky run. Run it before and after your change — and with a
+second model, if you want to tell what is the model and what is the framework. It spends
+real model calls and is not part of CI.
 
 ## How the code is organised
 

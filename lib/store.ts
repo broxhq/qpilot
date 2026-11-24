@@ -119,11 +119,12 @@ export function pushEvent(id: string, event: RunEvent): void {
       break;
     case "done":
       // Derive the verdict from steps, don't trust finish's argument:
-      // any failed step => failed (the model can't "pass" a run with failures).
+      // any failed step => failed (the model can't "pass" a run with failures),
+      // and so does a step nobody got to the end of.
       run.status =
         event.status === "stopped"
           ? "stopped"
-          : run.steps.some((s) => s.status === "fail")
+          : run.steps.some((s) => s.status === "fail" || s.cutOff)
             ? "failed"
             : (event.status ?? "passed");
       event.status = run.status;

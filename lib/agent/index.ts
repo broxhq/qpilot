@@ -43,7 +43,7 @@ const STEP_ACTION_BUDGET = 15;
 // Looking does not spend the step's allowance: reading the request journal, the
 // console or the page again is how a tester works out why something did not
 // happen, and it used to cost the same as a click.
-const FREE = new Set(["set_plan", "report_step", "finish", "note", "ask_user", "get_requests", "get_console", "snapshot", "look", "measure"]);
+const FREE = new Set(["set_plan", "report_step", "finish", "note", "ask_user", "get_requests", "get_console", "snapshot", "find", "look", "measure"]);
 
 // Actions that are not run a third time when the same one has twice sent
 // nothing and changed nothing.
@@ -64,9 +64,12 @@ const MAX_CUT_OFF_IN_A_ROW = 3;
 const MAX_EMPTY_TURNS = 3;
 
 /**
- * Closes the step the agent is on as fail, on the framework's behalf, and moves
- * on to the next queued one. Returns what to tell the model, or null when there
- * is no such step in the plan to close.
+ * Closes the step the agent is on, on the framework's behalf, and moves on to
+ * the next queued one. The step is recorded as a warn, not a fail: the agent
+ * did not get to a verdict, which says nothing about the product — a red step
+ * would send the tester to file a bug that may not exist. The run still ends as
+ * failed (see `cutOff` in the store). Returns what to tell the model, or null
+ * when there is no such step in the plan to close.
  */
 async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | null> {
   const { runId } = ctx;
@@ -88,7 +91,8 @@ async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | nul
   const step = {
     num,
     description: planned.description,
-    status: "fail" as const,
+    status: "warn" as const,
+    cutOff: true,
     evidence: dict(run?.language).stepCutOff.replace("{n}", String(spent)),
     screenshot,
     consoleErrors: consoleErrors.length ? consoleErrors : undefined,
@@ -100,7 +104,7 @@ async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | nul
   const upcoming = plan.find((s) => s.num !== num && s.status === "queued");
   ctx.step.current = upcoming?.num ?? num + 1;
   return (
-    `Step ${num} was closed by the framework as fail: ${spent} actions without a verdict. Do not report it and do not go back to it. ` +
+    `Step ${num} was closed by the framework as not verified (warn): ${spent} actions without a verdict. Do not report it and do not go back to it. ` +
     (upcoming ? `Go on with step ${upcoming.num}: "${upcoming.description}".` : "All steps are reported — call finish.")
   );
 }

@@ -1,7 +1,7 @@
 // Tools that act on the page.
 
 import { type Locator, type Page } from "playwright";
-import { findAnchor, readPage } from "../snapshot";
+import { findAnchor, readPage, searchPage } from "../snapshot";
 import { REF_RE } from "../context";
 import { actionResult, clickWithHint, locate, tabsLine } from "../page";
 import { type ScrollResult, describeScroll, pointerSpot, screenTop, scrollNearest, wheel } from "../scroll";
@@ -47,6 +47,25 @@ export const actionsTools: ToolDef[] = [
       }
       // don't push the full tree to events/SSE — the UI doesn't render it anyway
       return { content: tree, observation: `Page read (${tree.length} chars)` };
+    },
+  },
+
+  {
+    schema: {
+      name: "find",
+      description:
+        "Search the whole page tree for a text and get the matching elements with their refs and where they are: a name, a caption, part of a text, or a markup hint of an unnamed control (data-testid, class, icon). Use it when you know what you are looking for — it is quicker and surer than reading the tree block by block.",
+      input_schema: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "What to look for, in any letter case, e.g. 'Save', 'notif', 'bell'." },
+        },
+        required: ["text"],
+      },
+    },
+    run: async (input, ctx) => {
+      const found = await searchPage(ctx.page, String(input.text ?? ""));
+      return { content: found, observation: found.split("\n")[0] };
     },
   },
 

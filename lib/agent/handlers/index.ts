@@ -14,6 +14,7 @@ const ORDER = [
   "snapshot",
   "look",
   "measure",
+  "find",
   "click",
   "click_at",
   "fill",

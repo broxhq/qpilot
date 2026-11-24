@@ -24,7 +24,7 @@ const SERVER = join(ROOT, ".next", "standalone", "server.js");
 const PASSWORD = "s3cret-Passw0rd";
 
 const TEXT_TOOLS = [
-  "set_plan", "navigate", "snapshot", "click", "fill", "select", "hover", "press", "dismiss",
+  "set_plan", "navigate", "snapshot", "find", "click", "fill", "select", "hover", "press", "dismiss",
   "clear_session", "wait_for", "wait", "scroll_to", "scroll", "upload_file", "switch_tab", "handle_dialog", "note",
   "mock_request", "clear_mocks", "set_offline", "get_requests", "get_console", "ask_user",
   "report_step", "finish",
@@ -312,16 +312,16 @@ try {
       { QPILOT_VISION: "0" },
     );
 
-    assert.deepEqual(run.steps.map((s) => s.status), ["fail", "pass"], "the step is closed as fail, the next one is still run");
+    assert.deepEqual(run.steps.map((s) => s.status), ["warn", "pass"], "the step is closed as not verified — a warn, not a fail: nothing was shown to be broken — and the next one is still run");
     assert.match(run.steps[0].evidence, /40 actions/, "the card says why it was closed");
     assert.equal(shots[1]?.type, "image/jpeg", "…with a screenshot of the moment");
-    assert.equal(run.status, "failed");
+    assert.equal(run.status, "failed", "a run with a step nobody got to the end of is not a pass, whatever the model says");
     const told = toolResults(model.requests[2]);
     assert.equal(told.filter((c) => c.includes("OK: removed")).length, 40, "40 actions ran");
     assert.match(told.at(-1), /not executed\. You have used 40 actions on step 1\. Call report_step for step 1 now/, "the 41st did not: the model is asked for its own verdict first");
-    assert.match(toolResults(model.requests[3]).at(-1), /not executed\. Step 1 was closed by the framework as fail.*Go on with step 2/s, "it went on acting instead, so the step is closed for it");
-    assert.match(toolResults(model.requests[4]).find((c) => c.includes("already reported")) ?? "", /step 1 is already reported as fail/, "the agent cannot overrule it afterwards");
-    console.log("✓ a step that eats 40 actions is closed as fail and the run goes on");
+    assert.match(toolResults(model.requests[3]).at(-1), /not executed\. Step 1 was closed by the framework as not verified \(warn\).*Go on with step 2/s, "it went on acting instead, so the step is closed for it");
+    assert.match(toolResults(model.requests[4]).find((c) => c.includes("already reported")) ?? "", /step 1 is already reported as warn/, "the agent cannot overrule it afterwards");
+    console.log("✓ a step that eats 40 actions is closed as not verified and the run goes on");
   }
 
   // ── 4b. …but a verdict the agent gives when asked is its own ────────────────
@@ -355,7 +355,8 @@ try {
       { QPILOT_VISION: "0" },
     );
 
-    assert.deepEqual(run.steps.map((s) => s.status), ["fail", "fail", "fail", "skipped"], "three steps closed, the rest not attempted");
+    assert.deepEqual(run.steps.map((s) => s.status), ["warn", "warn", "warn", "skipped"], "three steps closed, the rest not attempted");
+    assert.equal(run.status, "failed");
     assert.match(run.summary, /3 steps in a row/);
     assert.equal(model.requests.length, 7, "no model call after the third");
     console.log("✓ three steps closed in a row stop the run");
@@ -752,6 +753,9 @@ try {
       [
         (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the page — it opens"] }] })],
         (_tree, call) => [call("navigate", { url: site.url + "crowded" })],
+        // looking for one control: ask for it instead of reading the tree block by block
+        (_tree, call) => [call("find", { text: "BELL" }), call("find", { text: "Cell 250" }), call("find", { text: "below line 30" }), call("find", { text: "no such thing" })],
+        (_tree, call, results) => [call("click", { ref: results.find((c) => c.includes("menu-bell") && c.includes("element(s) match")).match(/button \[ref=(e\d+)\]/)[1], name: "the bell" })],
         (_tree, call) => [
           call("report_step", { num: 1, expected: "it opens", evidence: "heading Crowded", status: "pass" }),
           call("finish", { status: "passed", summary: "Done." }),
@@ -767,6 +771,15 @@ try {
     assert.match(on, /Shortened to fit/, "…and the tree says it was shortened and how to read a block in full");
     assert.ok(on.length < 18_000, `the on-screen part keeps to the budget (${on.length})`);
     assert.match(off ?? "", /Below line 1/, "what is off screen still follows");
+
+    // find: the whole tree is searched, also what the model's view left out
+    const all = toolResults(model.requests.at(-1));
+    const found = (text) => all.find((c) => c.includes(`match "${text}"`)) ?? "";
+    assert.match(found("BELL"), /^1 element\(s\) match "BELL"[^\n]*\n- button \[ref=e\d+\][^\n]*\(no name; data-testid=menu-bell[^)]*, at \d+,\d+\) — on screen/, "an unnamed control is found by its markup hint, in any letter case, with its ref and place");
+    assert.match(found("Cell 250"), /- link "Cell 250" \[ref=e\d+\][^\n]* — on screen at \d+,\d+/, "an element the shortened view left out is found all the same");
+    assert.match(found("below line 30"), /- paragraph \[ref=e\d+\]: Below line 30 — off screen/, "what is down the page is found and said to be off screen");
+    assert.match(all.find((c) => c.startsWith("No element matches")) ?? "", /^No element matches "no such thing" — the whole page tree was searched \(\d+ lines/, "nothing found says what was searched");
+    assert.ok(all.some((c) => c.startsWith("OK: clicked the bell")), "a ref that find returned can be clicked");
     console.log("✓ a screen that holds more than the budget keeps its header: the biggest block is shortened, not the end of the tree");
   }
 } catch (err) {

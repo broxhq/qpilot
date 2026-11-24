@@ -25,6 +25,7 @@ function describeAction(name?: string, input?: unknown, t: Dict = dict("en")): s
   switch (name) {
     case "navigate": return `${a.opening} ${p.url ?? ""}`;
     case "snapshot": return p.near ? `${a.readingBlock} "${p.near}"` : a.readingPage;
+    case "find":     return `${a.searchingPage} "${p.text ?? ""}"`;
     case "look":     return p.why ? `${a.looking}: ${p.why}` : a.looking;
     case "measure":  return `${a.measuring} ${Array.isArray(p.refs) ? p.refs.length : ""}`.trim();
     case "click_at": return `${a.clickingAt} (${p.x}, ${p.y})${p.name ? ` — "${p.name}"` : ""}`;
