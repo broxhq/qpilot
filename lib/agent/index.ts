@@ -237,6 +237,7 @@ export async function runAgent(
       tool: "",
       actionStarted: Date.now(),
       dialogPolicy: null,
+      planQueried: false,
       notices: [],
       flashShot: null,
       persist,

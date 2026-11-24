@@ -782,6 +782,24 @@ try {
     assert.ok(all.some((c) => c.startsWith("OK: clicked the bell")), "a ref that find returned can be clicked");
     console.log("✓ a screen that holds more than the budget keeps its header: the biggest block is shortened, not the end of the tree");
   }
+
+  // ── 16. a plan with more steps than the test case numbers is questioned once ──
+  {
+    const two = (_tree, call) => [call("set_plan", { groups: [{ steps: ["Press Save", "The status shows Saved"] }] })];
+    const one = (_tree, call) => [call("set_plan", { groups: [{ steps: ["Press Save — the status shows Saved"] }] })];
+    const done = (_tree, call) => [call("finish", { status: "failed", summary: "Done." })];
+    const text = `Records\nURL: ${site.url}form\n1. Press Save.\n   Expected result: the status shows "Saved".`;
+    const fixed = await runWith([two, one, done], text, { QPILOT_VISION: "0" });
+    assert.match(
+      toolResults(fixed.model.requests[1])[0],
+      /^Error: the plan was not set\. The test case numbers 1 step\(s\) and your plan has 2\. A step and its expected result are ONE plan step/,
+      "an expected result made into a step of its own is pointed out, with the two counts",
+    );
+    assert.equal(fixed.run.steps.length, 1, "the plan sent again has one step per step of the test case");
+    const meant = await runWith([two, two, done], text, { QPILOT_VISION: "0" });
+    assert.equal(meant.run.steps.length, 2, "the same plan sent a second time is accepted: the question is asked once");
+    console.log("✓ a plan longer than the test case is questioned once, and accepted when sent again");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);

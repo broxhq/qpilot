@@ -162,7 +162,9 @@ try {
       if (ok) right++;
       else wrong++;
       const actions = events.filter((e) => e.kind === "action").map((e) => e.toolName);
-      console.log(`  ${ok ? "✓" : "✗"} run ${n}: ${got.join(", ") || "(no steps)"}${why ? ` — ${why}` : ""} · ${actions.length} tool calls, ${run.stats?.calls ?? "?"} model calls, ${Math.round((Date.now() - started) / 1000)} s`);
+      // calls the framework turned down: a guard at work, worth seeing even in a run that came out right
+      const refused = events.filter((e) => e.kind === "observation" && e.text?.startsWith("Error")).map((e) => e.text.split(/[.:]\s/)[1] ?? "");
+      console.log(`  ${ok ? "✓" : "✗"} run ${n}: ${got.join(", ") || "(no steps)"}${why ? ` — ${why}` : ""} · ${actions.length} tool calls, ${run.stats?.calls ?? "?"} model calls, ${Math.round((Date.now() - started) / 1000)} s${refused.length ? ` · refused: ${refused.join("; ").slice(0, 120)}` : ""}`);
       // the details of a run are worth reading only when it went wrong, or once per case
       if (!ok || n === 1) {
         for (const s of run.steps) console.log(`      ${s.num}. [${s.status}] ${s.evidence ?? ""}${s.reviewer ? `\n         reviewer: ${s.reviewer}` : ""}`);

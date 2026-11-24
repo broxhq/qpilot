@@ -71,6 +71,22 @@ export const planTools: ToolDef[] = [
         };
       }
 
+      // A plan longer than the test case is the model making a step out of an
+      // expected result ("Press Save" + "the status shows Saved"): the report then
+      // has two steps where the tester wrote one. The count is a fact of the text,
+      // so it is stated — once; the same plan sent again is taken as meant.
+      const numbered = (getRun(runId)?.testCase ?? "").split("\n").filter((l) => /^\s*\d+[.)]\s+\S/.test(l)).length;
+      const planned = groups.reduce((n, g) => n + g.steps.length, 0);
+      if (numbered > 0 && planned > numbered && !ctx.planQueried) {
+        ctx.planQueried = true;
+        return {
+          content:
+            `Error: the plan was not set. The test case numbers ${numbered} step(s) and your plan has ${planned}. ` +
+            "A step and its expected result are ONE plan step: the expected result is what you check on that step, not a step of its own. Preconditions are not steps either. " +
+            `Call set_plan again with one plan step per numbered step. If the test case really has ${planned} steps, send the same plan again and it will be accepted.`,
+        };
+      }
+
       setPlan(runId, groups);
       ctx.step.current = 1;
 

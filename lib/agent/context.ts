@@ -33,6 +33,8 @@ export interface ToolContext {
   actionStarted: number;
   /** One-shot answer for the next native dialog, set by handle_dialog. */
   dialogPolicy: { action: "accept" | "dismiss"; text?: string } | null;
+  /** set_plan has already been told once that the plan has more steps than the test case numbers. */
+  planQueried: boolean;
   /** Things that happened on their own (dialog, new tab) — prepended to the next tool result. */
   notices: string[];
   /** The page at the moment a short-lived message was on it — the evidence for the step if it fails. */
