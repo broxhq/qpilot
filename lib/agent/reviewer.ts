@@ -68,6 +68,52 @@ function withoutTree(name: string, input: Record<string, unknown>, text: string)
   return at >= 0 ? text.slice(0, at) : text;
 }
 
+/** Everything the reviewer is given about one verdict. */
+export interface ReviewCase {
+  testCase: string;
+  step: { num: number; description: string; expected?: string; evidence?: string };
+  /** What the tools returned while the agent worked on the step, numbered. */
+  record: string;
+  /** The page tree as the agent last saw it, without refs. */
+  tree: string;
+}
+
+function questionOf(c: ReviewCase): string {
+  return [
+    "Test case:\n```\n" + c.testCase + "\n```",
+    `Step under review: ${c.step.num}) ${c.step.description}`,
+    `Expected result, as the agent restated it: ${c.step.expected ?? "(not given — take it from the test case)"}`,
+    `Agent's verdict: PASS\nAgent's evidence: ${c.step.evidence ?? "(none)"}`,
+    "Records — what the tools returned while the agent worked on this step, in order:\n" + (c.record || "(no tool calls)"),
+    "The page tree as the agent last saw it:\n" + (c.tree || "(none)"),
+  ].join("\n\n");
+}
+
+/**
+ * The second opinion on one pass. Used by the run, and by the check of the
+ * reviewer itself (e2e/review-eval.mjs), which replays saved cases through it.
+ */
+export async function opine(
+  cfg: ProviderConfig,
+  client: Anthropic | null,
+  c: ReviewCase,
+): Promise<{ opinion: { verdict: Verdict; reason: string } | null; answer: string; calls: number; inputTokens: number; outputTokens: number }> {
+  const question = questionOf(c);
+  let opinion: ReturnType<typeof parseVerdict> = null;
+  let answer = "";
+  const used = { calls: 0, inputTokens: 0, outputTokens: 0 };
+  // The gateway now and then returns an empty answer; one more try, then no opinion.
+  for (let attempt = 0; attempt < 2 && !opinion; attempt++) {
+    const res = await askText(cfg, client, SYSTEM, question, REVIEW_TIMEOUT_MS);
+    used.calls++;
+    used.inputTokens += res.inputTokens;
+    used.outputTokens += res.outputTokens;
+    answer = res.text;
+    opinion = parseVerdict(res.text);
+  }
+  return { opinion, answer, ...used };
+}
+
 export class Reviewer {
   /** What the tools returned since the last reported step. */
   private facts: string[] = [];
@@ -111,32 +157,25 @@ export class Reviewer {
     if (record.length > MAX_FACTS_CHARS) record = "…\n" + record.slice(-MAX_FACTS_CHARS);
     const tree = stripRefs(ctx.lastTree ?? "").slice(0, MAX_TREE_CHARS);
 
-    const question = [
-      "Test case:\n```\n" + this.testCase + "\n```",
-      `Step under review: ${step.num}) ${step.description}`,
-      `Expected result, as the agent restated it: ${step.expected ?? "(not given — take it from the test case)"}`,
-      `Agent's verdict: PASS\nAgent's evidence: ${step.evidence ?? "(none)"}`,
-      "Records — what the tools returned while the agent worked on this step, in order:\n" + (record || "(no tool calls)"),
-      "The page tree as the agent last saw it:\n" + (tree || "(none)"),
-    ].join("\n\n");
-
-    this.pending.push(this.ask(ctx, step.num, question, shot).catch(() => {}));
+    const asked: ReviewCase = {
+      testCase: this.testCase,
+      step: { num: step.num, description: step.description, expected: step.expected, evidence: step.evidence },
+      record,
+      tree,
+    };
+    this.pending.push(this.ask(ctx, asked, shot).catch(() => {}));
   }
 
-  private async ask(ctx: ToolContext, num: number, question: string, shot: Buffer | undefined): Promise<void> {
+  private async ask(ctx: ToolContext, asked: ReviewCase, shot: Buffer | undefined): Promise<void> {
     const { runId } = ctx;
-    // The gateway now and then returns an empty answer; one more try, then no opinion.
-    let opinion: ReturnType<typeof parseVerdict> = null;
-    for (let attempt = 0; attempt < 2 && !opinion; attempt++) {
-      const res = await askText(this.cfg, this.client, SYSTEM, question, REVIEW_TIMEOUT_MS);
-      // the call runs beside the agent's own, so its time is not added to modelMs —
-      // that would count the same seconds twice
-      addStats(runId, { calls: 1, inputTokens: res.inputTokens, outputTokens: res.outputTokens });
-      // QPILOT_REVIEW_LOG=<file>: every question and answer, to audit the reviewer itself
-      const log = process.env.QPILOT_REVIEW_LOG;
-      if (log) await appendFile(log, JSON.stringify({ runId, num, question, answer: res.text }) + "\n").catch(() => {});
-      opinion = parseVerdict(res.text);
-    }
+    const num = asked.step.num;
+    const { opinion, answer, ...used } = await opine(this.cfg, this.client, asked);
+    // the call runs beside the agent's own, so its time is not added to modelMs —
+    // that would count the same seconds twice
+    addStats(runId, used);
+    // QPILOT_REVIEW_LOG=<file>: every case and answer, to audit the reviewer itself (e2e/review-eval.mjs replays them)
+    const log = process.env.QPILOT_REVIEW_LOG;
+    if (log) await appendFile(log, JSON.stringify({ runId, num, case: asked, answer }) + "\n").catch(() => {});
     if (opinion?.verdict !== "contradicted") return;
     const current = getRun(runId)?.steps.find((s) => s.num === num);
     if (!current || current.status !== "pass") return;

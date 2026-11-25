@@ -89,6 +89,13 @@ right every time, not on one lucky run. Run it before and after your change — 
 second model, if you want to tell what is the model and what is the framework. It spends
 real model calls and is not part of CI.
 
+A change to the second opinion (`lib/agent/reviewer.ts`) has a check of its own. Collect
+real passes with `QPILOT_REVIEW_LOG=cases.jsonl npm run live`, then run
+`npm run review -- cases.jsonl`: it replays every pass through the reviewer as it was,
+with what the evidence quotes replaced by something else, and with those lines removed,
+and counts the objections. An objection to an untouched pass is the one thing that must
+not go up: it puts a warning on a correct step of every report.
+
 ## How the code is organised
 
 ```
