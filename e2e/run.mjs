@@ -102,6 +102,7 @@ async function runWith(script, testCase, env = {}, review, { home: kept, probe, 
   writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", baseURL: model.url, apiKey: "e2e-key-0000000000", model: "scripted" }));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
+  model.about.base = base;
   const app = spawn("node", [SERVER], {
     env: { ...process.env, ...env, QPILOT_HOME: home, PORT: String(port), HOSTNAME: "127.0.0.1" },
     stdio: ["ignore", "ignore", "inherit"],
@@ -857,6 +858,24 @@ try {
     assert.equal(pay.run.steps[0].status, "fail", "a fail keeps its verdict: a check that does not hold is what a fail is about");
     assert.equal(pay.run.steps[0].requests?.length, 1, "the request a check named is attached to the step as proof");
 
+    // a check that names the wrong request is told which request does carry the text
+    const wrongNumber = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Press Pay — Order_Paid is sent"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "paid" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Pay"/), name: "Pay" })],
+        (_tree, call) => [call("report_step", { num: 1, expected: "Order_Paid is sent", evidence: "the event went out", status: "pass", checks: [{ kind: "request_has", text: "Order_Paid", request: 1 }] })],
+        (_tree, call) => [call("finish", { status: "failed", summary: "Done." })],
+      ],
+      "Checkout\n1. Press Pay.",
+      { QPILOT_VISION: "0" },
+    );
+    assert.match(
+      toolResults(wrongNumber.model.requests.at(-1)).find((c) => c.startsWith("Error: not recorded. The framework ran your checks")) ?? "",
+      /request #1 is GET [^ ]*\/paid and does not carry this text in its URL or body — request #\d+ \(POST [^ ]*\/collect\) does: name that one/,
+      "a check on the wrong request says which request has the text",
+    );
+
     // a step about several states: what an earlier tab showed is no longer on the page when the step is reported
     const tab = (name) => (tree, call) => [call("click", { ref: ref(tree, new RegExp(`tab "${name}"`)), name })];
     const tabs = await runWith(
@@ -878,6 +897,37 @@ try {
     assert.deepEqual(tabs.run.steps[0].checks.map((c) => [c.present, c.holds]), [[true, true], [true, true], [false, true]], "page_has is true of what an earlier tab of the step showed; page_lacks is about the page as it is now");
     assert.equal(tabs.run.steps[0].status, "pass");
     console.log("✓ checks named by the model are run on the page and the request log; a pass against its own check is questioned, then recorded as warn");
+  }
+
+  // ── 18. no address in the test case; the app's own pages; a page whose font never loads ──
+  {
+    const started = Date.now();
+    const { run, events, model } = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Look at the page — the text is readable"] }] })],
+        (_tree, call, _results, about) => [call("navigate", { url: about.base + "/settings" })],
+        (_tree, call) => [call("navigate", { url: site.url + "slowfont" })],
+        (_tree, call) => [call("look", { why: "is the text readable" })],
+        (_tree, call) => [
+          call("report_step", { num: 1, expected: "the text is readable", evidence: "the text is there, in a fallback font", status: "warn" }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Fonts\n1. Look at the page.",
+      { QPILOT_VISION: "1" },
+    );
+    assert.match(model.requests[0].messages[1].content, /The test case gives no address of the site under test\. Ask the user for it with ask_user/, "a test case with no address in it: the agent is told to ask, not to guess");
+    assert.match(
+      toolResults(model.requests.at(-1)).find((c) => c.startsWith("Error: not opened")) ?? "",
+      /^Error: not opened\. http:\/\/127\.0\.0\.1:\d+ is qpilot itself/,
+      "the app's own pages are not opened as a site under test",
+    );
+    const looked = model.requests.find((r) => r.messages.some((m) => Array.isArray(m.content)));
+    assert.ok(looked, "a look at a page whose font never arrives still returns a picture");
+    assert.ok(!events.some((e) => e.kind === "observation" && /Timeout/.test(e.text ?? "")), "…without a timeout");
+    assert.ok(run.steps[0].screenshot, "…and so does the screenshot of the step");
+    assert.ok(Date.now() - started < 40_000, `…in seconds, not half a minute per picture (${Math.round((Date.now() - started) / 1000)} s)`);
+    console.log("✓ no address in the case is said so; the app's own pages stay closed; a slow font does not hold up a screenshot");
   }
 } catch (err) {
   failed = true;

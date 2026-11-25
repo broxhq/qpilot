@@ -323,9 +323,30 @@ export async function clickWithHint(action: () => Promise<void>): Promise<void> 
   }
 }
 
+/**
+ * A JPEG of the visible part of the page. Playwright waits for the page's web
+ * fonts before it takes one, and a page that is still fetching a font keeps it
+ * waiting for the full thirty seconds — on a real portal that was half a minute
+ * of a run gone on one look. After a few seconds the browser is asked directly:
+ * a picture with a fallback font is still the page as a person sees it right now.
+ */
+export async function shoot(page: Page, quality = 55): Promise<Buffer> {
+  try {
+    return await page.screenshot({ type: "jpeg", quality, timeout: 4000 });
+  } catch {
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality });
+      return Buffer.from(data, "base64");
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
+  }
+}
+
 export async function captureEvidence(page: Page): Promise<Buffer | undefined> {
   try {
-    return await page.screenshot({ type: "jpeg", quality: 55 });
+    return await shoot(page);
   } catch {
     return undefined;
   }

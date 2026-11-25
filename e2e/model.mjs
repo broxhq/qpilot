@@ -3,7 +3,8 @@
 // so the agent loop, the tools and the report can be checked without a real model.
 //
 // A turn is a function of the latest page tree (to pick refs out of it) that
-// returns the tool calls to make. It is also given every tool result so far.
+// returns the tool calls to make. It is also given every tool result so far, and
+// `about` — what the test has told the model about the run (the app's address).
 
 import http from "node:http";
 
@@ -30,6 +31,7 @@ export function ref(tree, pattern) {
  */
 export function startModel(script, { review } = {}) {
   const requests = [];
+  const about = {};
   const visionChecks = [];
   const reviews = [];
   let turn = 0;
@@ -59,7 +61,7 @@ export function startModel(script, { review } = {}) {
       let calls;
       try {
         // a turn may take its time (return a promise): a model that is slow to answer
-        calls = step ? await step(tree, call, results) : [call("finish", { status: "failed", summary: "The script ran out of turns." })];
+        calls = step ? await step(tree, call, results, about) : [call("finish", { status: "failed", summary: "The script ran out of turns." })];
       } catch (err) {
         calls = [call("finish", { status: "failed", summary: `Script error: ${err.message}` })];
       }
@@ -71,6 +73,6 @@ export function startModel(script, { review } = {}) {
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>
-      resolve({ url: `http://127.0.0.1:${server.address().port}/v1`, requests, visionChecks, reviews, close: () => server.close() })),
+      resolve({ url: `http://127.0.0.1:${server.address().port}/v1`, requests, about, visionChecks, reviews, close: () => server.close() })),
   );
 }

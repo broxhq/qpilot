@@ -34,7 +34,16 @@ const DIGEST_BODY_CHARS = 220;
 function shortUrl(url: string): string {
   try {
     const u = new URL(url);
-    const path = u.pathname.length > 70 ? `…${u.pathname.slice(-70)}` : u.pathname;
+    let path = u.pathname;
+    if (path.length > 60) {
+      // the end of a path says which call it was: keep whole segments of it
+      const kept: string[] = [];
+      for (const seg of path.split("/").filter(Boolean).reverse()) {
+        if (kept.length && kept.join("/").length + seg.length > 44) break;
+        kept.unshift(seg);
+      }
+      path = `/…/${kept.join("/")}`;
+    }
     return `${u.host}${path}${u.search ? "?…" : ""}`;
   } catch {
     return url.slice(0, 90);
@@ -730,7 +739,7 @@ export class NetworkMonitor {
    * Does request #n — or, with no number, any recorded request — carry `text`
    * in its URL or body, as sent or once decoded? For checks the framework runs.
    */
-  carries(text: string, n?: number): { known: boolean; present: boolean; where?: string } {
+  carries(text: string, n?: number): { known: boolean; present: boolean; where?: string; n?: number } {
     const needle = text.trim().toLowerCase();
     const all = [...this.log, ...this.assets];
     const pool = n === undefined ? all : all.filter((e) => e.n === n);
@@ -738,7 +747,7 @@ export class NetworkMonitor {
     // the latest one that has it: the step is about what was sent last
     const hit = [...pool].reverse().find((e) => haystack(e).includes(needle));
     const about = hit ?? (n !== undefined ? pool[0] : undefined);
-    return { known: true, present: !!hit, where: about ? `${about.method} ${shortUrl(about.url)}` : undefined };
+    return { known: true, present: !!hit, where: about ? `${about.method} ${shortUrl(about.url)}` : undefined, n: about?.n };
   }
 
   /** Errors logged since the previous call — for the per-step note in the report. */

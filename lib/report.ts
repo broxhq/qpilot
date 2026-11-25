@@ -25,14 +25,28 @@ function counts(run: Run, t: Dict): string {
 
 const statusLabel = (run: Run, t: Dict) => t.status[run.status]?.label ?? run.status;
 
-/** "✓ the page has «Saved»" — what a check the framework ran found, and whether that was what the step asked for. */
-export function checkLine(c: StepCheck, t: Dict): string {
-  const found = c.kind.startsWith("page")
-    ? c.present ? t.checkPageHas : t.checkPageNo
-    : c.where
-      ? (c.present ? t.checkRequestHas : t.checkRequestNo).replace("{where}", c.where)
-      : c.present ? t.checkAnyHas : t.checkAnyNo;
-  return `${c.holds ? "✓" : "✗"} ${found} «${c.text}»${c.holds ? "" : ` — ${t.checkMismatch}`}`;
+/**
+ * What the checks the framework ran found, as lines to print: "✓ the page has
+ * «Saved»", and the checks of one request together — "in the request POST …/pay:
+ * ✓ has «amount», ✗ does not have «orderId»". `ok` is false when any check of
+ * the line did not come out as the step asked.
+ */
+export function checkLines(checks: StepCheck[], t: Dict): { text: string; ok: boolean }[] {
+  const mark = (c: StepCheck, found: string) => `${c.holds ? "✓" : "✗"} ${found} «${c.text}»${c.holds ? "" : ` (${t.checkMismatch})`}`;
+  const lines: { text: string; ok: boolean }[] = [];
+  const byRequest = new Map<string, StepCheck[]>();
+  for (const c of checks) {
+    if (c.kind.startsWith("page")) lines.push({ text: mark(c, c.present ? t.checkPageHas : t.checkPageNo), ok: c.holds });
+    else byRequest.set(c.where ?? "", [...(byRequest.get(c.where ?? "") ?? []), c]);
+  }
+  for (const [where, group] of byRequest) {
+    const head = where ? t.checkInRequest.replace("{where}", where) : t.checkInRequests;
+    lines.push({
+      text: `${head}: ${group.map((c) => mark(c, c.present ? t.checkThere : t.checkNotThere)).join(", ")}`,
+      ok: group.every((c) => c.holds),
+    });
+  }
+  return lines;
 }
 
 /** "POST https://… → 200 [ping]" */
@@ -59,7 +73,7 @@ export function reportMarkdown(run: Run, elapsedMs: number, t: Dict): string {
       if (failed && s.expected) out.push(`   - ${t.expected}: ${s.expected}`);
       if (s.evidence) out.push(failed ? `   - ${t.actual}: ${s.evidence}` : `   - ${s.evidence}`);
       if (s.reviewer) out.push(`   - ⚠ ${t.reviewerObjects}: ${s.reviewer}`);
-      if (s.checks?.length) out.push(`   - ${t.checksTitle}: ${s.checks.map((c) => checkLine(c, t)).join("; ")}`);
+      if (s.checks?.length) out.push(`   - ${t.checksTitle}: ${checkLines(s.checks, t).map((l) => l.text).join("; ")}`);
       for (const r of s.requests ?? []) {
         out.push(`   - ${t.proofRequests}: \`${requestLine(r)}\` (${t.proofSentAfter}: ${r.after})`);
         const block = (label: string, text: string) =>
@@ -113,8 +127,8 @@ export function reportHtml(
     if (s.reviewer) rows.push(`<dt>⚠</dt><dd style="color:${COLOR.warn}">${esc(t.reviewerObjects)}: ${esc(s.reviewer)}</dd>`);
     if (s.checks?.length) {
       rows.push(
-        `<dt>${esc(t.checksTitle)}</dt><dd>${s.checks
-          .map((c) => `<span style="color:${c.holds ? COLOR.pass : COLOR.fail}">${esc(checkLine(c, t))}</span>`)
+        `<dt>${esc(t.checksTitle)}</dt><dd>${checkLines(s.checks, t)
+          .map((l) => `<span style="color:${l.ok ? COLOR.pass : COLOR.fail}">${esc(l.text)}</span>`)
           .join("<br>")}</dd>`,
       );
     }

@@ -138,6 +138,8 @@ export async function runAgent(
   runId: string,
   testCase: string,
   headless = true,
+  /** The port the app is served on, so that the agent is not let into its own pages. */
+  ownPort = "",
 ): Promise<void> {
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
@@ -239,6 +241,7 @@ export async function runAgent(
       tool: "",
       actionStarted: Date.now(),
       dialogPolicy: null,
+      ownPort,
       planQueried: false,
       checksQueried: null,
       flashSeen: [],
@@ -277,6 +280,13 @@ export async function runAgent(
       ? "\n\nSign-ins saved from earlier runs are loaded into the browser, so a site may open already signed in. If it does, the login precondition is done: do not ask for a login or a code unless the page shows a sign-in form. If the test case itself checks signing in, call clear_session before you start."
       : "";
 
+    // A test case copied from a test-management system often has no address in
+    // it. Left to itself the agent guessed "localhost" and ended up reading this
+    // app's own Settings page; the person who started the run knows the address.
+    const addressNote = /https?:\/\/|www\.|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/i.test(testCase)
+      ? ""
+      : "\n\nThe test case gives no address of the site under test. Ask the user for it with ask_user before you navigate anywhere — do not guess one.";
+
     const messages: Anthropic.MessageParam[] = [
       {
         role: "user",
@@ -286,6 +296,7 @@ export async function runAgent(
           "\n```" +
           attachmentNote +
           sessionNote +
+          addressNote +
           "\n\n" +
           languageNote,
       },

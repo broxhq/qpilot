@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
   const title = firstNonEmptyLine(input.testCase) || "Untitled test";
   createRun(id, title, input.testCase, files, input.headless);
 
-  runAgent(id, input.testCase, input.headless).catch((err) => {
+  runAgent(id, input.testCase, input.headless, req.nextUrl.port || (req.nextUrl.protocol === "https:" ? "443" : "80")).catch((err) => {
     console.error("agent crashed", err);
   });
 

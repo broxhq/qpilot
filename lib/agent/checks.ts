@@ -87,6 +87,8 @@ export async function runChecks(ctx: ToolContext, raw: unknown): Promise<RanChec
     }
     const n = c.request === undefined || c.request === null ? undefined : Number(String(c.request).replace(/^#/, ""));
     const got = ctx.net.carries(text, Number.isInteger(n) ? n : undefined);
+    // the number may be the wrong one: say which request does carry the text
+    const elsewhere = got.known && !got.present && n !== undefined ? ctx.net.carries(text) : null;
     return {
       kind: c.kind,
       text,
@@ -98,7 +100,10 @@ export async function runChecks(ctx: ToolContext, raw: unknown): Promise<RanChec
         ? `there is no request #${n} in the request log`
         : got.present
           ? wanted ? undefined : `${got.where ?? "a request"} carries this text`
-          : `${n === undefined ? "no recorded request carries" : `${got.where ?? `request #${n}`} does not carry`} this text in its URL or body`,
+          : n === undefined
+            ? "no recorded request carries this text in its URL or body"
+            : `request #${n} is ${got.where ?? "another request"} and does not carry this text in its URL or body` +
+              (elsewhere?.present ? ` — request #${elsewhere.n} (${elsewhere.where}) does: name that one` : ""),
     };
   });
 }

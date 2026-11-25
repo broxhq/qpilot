@@ -47,10 +47,10 @@ export interface Dict {
   checksTitle: string;
   checkPageHas: string;
   checkPageNo: string;
-  checkRequestHas: string;
-  checkRequestNo: string;
-  checkAnyHas: string;
-  checkAnyNo: string;
+  checkInRequest: string;
+  checkInRequests: string;
+  checkThere: string;
+  checkNotThere: string;
   checkMismatch: string;
   /** Added to the evidence of a pass recorded as warn because a check did not hold. */
   checkFailed: string;
@@ -233,10 +233,10 @@ const en: Dict = {
   checksTitle: "Checked by code",
   checkPageHas: "the page has",
   checkPageNo: "the page does not have",
-  checkRequestHas: "the request {where} has",
-  checkRequestNo: "the request {where} does not have",
-  checkAnyHas: "a request has",
-  checkAnyNo: "no request has",
+  checkInRequest: "in the request {where}",
+  checkInRequests: "in the requests",
+  checkThere: "has",
+  checkNotThere: "does not have",
   checkMismatch: "the opposite was expected",
   checkFailed: "A check run by code did not hold",
   proofRequests: "Requests behind the verdict",
@@ -432,10 +432,10 @@ const ru: Dict = {
   checksTitle: "Проверено кодом",
   checkPageHas: "на странице есть",
   checkPageNo: "на странице нет",
-  checkRequestHas: "в запросе {where} есть",
-  checkRequestNo: "в запросе {where} нет",
-  checkAnyHas: "в запросах есть",
-  checkAnyNo: "в запросах нет",
+  checkInRequest: "в запросе {where}",
+  checkInRequests: "в запросах",
+  checkThere: "есть",
+  checkNotThere: "нет",
   checkMismatch: "ожидалось обратное",
   checkFailed: "Проверка кодом не сошлась",
   proofRequests: "Запросы, на которых основан вердикт",

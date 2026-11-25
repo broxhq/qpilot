@@ -3,7 +3,7 @@
 import { type Locator, type Page } from "playwright";
 import { findAnchor, readPage, searchPage } from "../snapshot";
 import { REF_RE } from "../context";
-import { actionResult, clickWithHint, locate, tabsLine } from "../page";
+import { actionResult, clickWithHint, locate, shoot, tabsLine } from "../page";
 import { type ScrollResult, describeScroll, pointerSpot, screenTop, scrollNearest, wheel } from "../scroll";
 import { type ToolDef, ref, label } from "../tool";
 
@@ -17,6 +17,18 @@ export const actionsTools: ToolDef[] = [
     page: true,
     run: async (input, ctx) => {
       const { page } = ctx;
+      // this app's own pages are not a site under test: its Settings are the user's, not a tester's
+      try {
+        const to = new URL(String(input.url));
+        const port = to.port || (to.protocol === "https:" ? "443" : "80");
+        if (ctx.ownPort && port === ctx.ownPort && /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/.test(to.hostname)) {
+          return {
+            content: `Error: not opened. ${to.origin} is qpilot itself — the tool this run is made with — not the site under test. Take the address from the test case; if it gives none, ask the user for it with ask_user.`,
+          };
+        }
+      } catch {
+        // not a URL at all: let the browser say so
+      }
       await page.goto(String(input.url), {
         waitUntil: "domcontentloaded",
         timeout: 60000, // slow networks and VPNs: 20s was not enough for a first load
@@ -548,7 +560,7 @@ export const actionsTools: ToolDef[] = [
     vision: true,
     run: async (_input, ctx) => {
       const { page } = ctx;
-      const image = await page.screenshot({ type: "jpeg", quality: 60 });
+      const image = await shoot(page, 60);
       const { width, height } = viewportOf(page);
       return {
         content: `Screenshot of the visible part of the page: ${width}×${height} px, (0, 0) is its top-left corner. Use these coordinates with click_at / hover_at. What is below the fold is not in it — scroll first.`,

@@ -33,6 +33,8 @@ export interface ToolContext {
   actionStarted: number;
   /** One-shot answer for the next native dialog, set by handle_dialog. */
   dialogPolicy: { action: "accept" | "dismiss"; text?: string } | null;
+  /** The port this app itself is served on: a loopback address with it is qpilot, not a site under test. */
+  ownPort: string;
   /** The step whose failing checks the model has already been told about: the next report of it is recorded. */
   checksQueried: number | null;
   /** Messages that appeared and vanished on the current step — a check may be about one of them. */

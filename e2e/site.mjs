@@ -219,6 +219,13 @@ function pay() {
 }
 </script></body></html>`;
 
+// A page whose web font never arrives. Playwright waits for fonts before a
+// screenshot, so every look at such a page used to take thirty seconds.
+const slowFont = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Slow font</title>
+<style>@font-face { font-family: Slow; src: url(/hang.woff2); } body { font-family: Slow, sans-serif; }</style></head><body>
+<h1>Slow font</h1><p>The text is here, the font is not.</p>
+</body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -246,6 +253,8 @@ export function startSite() {
       res.writeHead(204);
       return res.end();
     }
+    // never answered: the browser keeps waiting for it
+    if (req.url === "/hang.woff2") return;
     if (req.url === "/api/fail") {
       res.writeHead(500, { "content-type": "application/json" });
       return res.end('{"error":"storage is unavailable"}');
@@ -256,7 +265,7 @@ export function startSite() {
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : req.url === "/countries-ok" ? countriesOk : req.url === "/events" ? events : req.url === "/crowded" ? crowded : req.url === "/order" ? order("3 890") : req.url === "/order-ok" ? order("3 980") : req.url === "/team" ? team : req.url === "/stale" ? stale : req.url === "/paid" ? paid : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : req.url === "/countries-ok" ? countriesOk : req.url === "/events" ? events : req.url === "/crowded" ? crowded : req.url === "/order" ? order("3 890") : req.url === "/order-ok" ? order("3 980") : req.url === "/team" ? team : req.url === "/stale" ? stale : req.url === "/paid" ? paid : req.url === "/slowfont" ? slowFont : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>

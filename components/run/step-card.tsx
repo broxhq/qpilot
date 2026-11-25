@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { LogLine, isVisibleLog } from "@/components/run/log";
 import { RequestProofs } from "@/components/run/requests";
-import { checkLine } from "@/lib/report";
+import { checkLines } from "@/lib/report";
 
 const STEP_ACCENT: Record<string, { border: string; badge: string; bg: string }> = {
   queued:  { border: "border-l-border-strong",       badge: "bg-surface-hover text-subtle",     bg: ""                      },
@@ -119,9 +119,9 @@ export function StepCard({
           <div className="px-4 pb-3 -mt-1 text-[11.5px] leading-relaxed">
             <span className="text-subtle">{t.checksTitle}:</span>
             <ul className="mt-1 space-y-0.5 font-mono">
-              {step.checks.map((c, i) => (
-                <li key={i} className={cn("break-words", c.holds ? "text-success" : "text-destructive")}>
-                  {checkLine(c, t)}
+              {checkLines(step.checks, t).map((l, i) => (
+                <li key={i} className={cn("break-words", l.ok ? "text-success" : "text-destructive")}>
+                  {l.text}
                 </li>
               ))}
             </ul>
