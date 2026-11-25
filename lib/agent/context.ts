@@ -33,6 +33,16 @@ export interface ToolContext {
   actionStarted: number;
   /** One-shot answer for the next native dialog, set by handle_dialog. */
   dialogPolicy: { action: "accept" | "dismiss"; text?: string } | null;
+  /** The step whose failing checks the model has already been told about: the next report of it is recorded. */
+  checksQueried: number | null;
+  /** Messages that appeared and vanished on the current step — a check may be about one of them. */
+  flashSeen: string[];
+  /**
+   * What the page read after each action of the current step. A step about
+   * several states (every tab, every country) is judged at the end, when all
+   * but the last state are gone from the page: a check looks here as well.
+   */
+  seenTexts: string[];
   /** set_plan has already been told once that the plan has more steps than the test case numbers. */
   planQueried: boolean;
   /** Things that happened on their own (dialog, new tab) — prepended to the next tool result. */

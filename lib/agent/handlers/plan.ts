@@ -3,6 +3,7 @@
 import { askQuestion, getRun, pushEvent, saveScreenshot, setPlan } from "../../store";
 import { dict } from "../../i18n";
 import { type PlanGroup, type RequestProof } from "../../types";
+import { runChecks } from "../checks";
 import { type ReportStatus } from "../context";
 import { captureEvidence } from "../page";
 import { FLASH_NOTE } from "../flash";
@@ -158,6 +159,20 @@ export const planTools: ToolDef[] = [
             description:
               "What you actually saw, one or two sentences: a verbatim quote from the page, a request and its status, a dialog text. For a 'changed / did not change' check give the value before and after for every element checked. For a step about several items, one clause per item.",
           },
+          checks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["page_has", "page_lacks", "request_has", "request_lacks"] },
+                text: { type: "string", description: "The exact text: as the page shows it, or as it stands in the request's URL or body." },
+                request: { type: "number", description: "For request_has / request_lacks: the #number of the request. Leave out to look in every request." },
+              },
+              required: ["kind", "text"],
+            },
+            description:
+              "The expected result put as literal conditions, when it can be: a text that must (page_has) or must not (page_lacks) be on the page, a field or value that must (request_has) or must not (request_lacks) be in a request. The framework runs them on the real page and the request log and records what it found next to your verdict. A pass needs every one of them to hold.",
+          },
           requests: {
             type: "array",
             items: { type: "number" },
@@ -212,13 +227,31 @@ export const planTools: ToolDef[] = [
         };
       }
       const clean = (v: unknown) => redact(ctx, stripRefs(String(v))).trim();
+      // The conditions the model named are run on the real page and the request
+      // log. A pass with one that does not hold is turned down once, with what is
+      // there instead; reported as pass again, it is recorded as a warn.
+      const ran = await runChecks(ctx, input.checks);
+      const broken = status === "pass" ? ran.filter((c) => !c.holds) : [];
+      if (broken.length > 0 && ctx.checksQueried !== num) {
+        ctx.checksQueried = num;
+        return {
+          content:
+            "Error: not recorded. The framework ran your checks on the page and the request log. A pass needs every one of them to hold, and these do not:\n" +
+            broken.map((c) => `- ${c.kind} "${c.text}": ${c.note ?? "does not hold"}`).join("\n") +
+            "\nRead what is there. If the expected result does not hold, report the step as fail and quote what the page or the request shows. If a check was worded wrongly, correct it. A pass reported again with a check that does not hold is recorded as warn.",
+        };
+      }
+      const disputed = broken.length > 0;
       // "Repeat for every country" judged on one country is not a pass: the
       // agent says what it left out, and the framework draws the conclusion.
       const skipped = Array.isArray(input.not_checked)
         ? input.not_checked.map((v) => clean(v)).filter(Boolean).slice(0, 30)
         : [];
-      const partial = status === "pass" && skipped.length > 0;
-      const coverage = skipped.length ? ` ${dict(getRun(runId)?.language).notChecked}: ${skipped.join(", ")}.` : "";
+      const partial = (status === "pass" && skipped.length > 0) || disputed;
+      const words = dict(getRun(runId)?.language);
+      const coverage =
+        (skipped.length ? ` ${words.notChecked}: ${skipped.join(", ")}.` : "") +
+        (disputed ? ` ${words.checkFailed}: ${broken.map((c) => `«${redact(ctx, c.text)}»`).join(", ")}.` : "");
       // JPEG goes to the store and is served via a separate GET — never inlined in events/SSE
       let screenshot: string | undefined;
       const flashShot = ctx.flashShot;
@@ -238,10 +271,17 @@ export const planTools: ToolDef[] = [
       const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
       // the requests the verdict is about go with the step: a screenshot of the
       // page does not show that a field is missing from a request body
-      const named = (Array.isArray(input.requests) ? input.requests : input.requests == null ? [] : [input.requests])
-        .map((v) => Number(String(v).replace(/^#/, "")))
-        .filter((n) => Number.isInteger(n))
+      const named = [
+        ...(Array.isArray(input.requests) ? input.requests : input.requests == null ? [] : [input.requests]).map((v) => Number(String(v).replace(/^#/, ""))),
+        // a request a check was about is evidence as well
+        ...ran.flatMap((c) => (c.request === undefined ? [] : [c.request])),
+      ]
+        .filter((n, i, all) => Number.isInteger(n) && all.indexOf(n) === i)
         .slice(0, 5);
+      ctx.flashSeen = [];
+      ctx.seenTexts = [];
+      ctx.checksQueried = null;
+      const checks = ran.map((c) => ({ kind: c.kind, text: redact(ctx, c.text), request: c.request, where: c.where, present: c.present, holds: c.holds }));
       const requests = ctx.net.proof(named, String(input.evidence ?? "")).map((r) => redactDeep(ctx, r) as RequestProof);
       const step = {
         num,
@@ -254,6 +294,7 @@ export const planTools: ToolDef[] = [
         expected: input.expected ? clean(input.expected) : undefined,
         evidence: input.evidence || coverage ? `${input.evidence ? clean(input.evidence) : ""}${coverage}`.trim() : undefined,
         screenshot,
+        checks: checks.length ? checks : undefined,
         requests: requests.length ? requests : undefined,
         consoleErrors: consoleErrors.length ? consoleErrors : undefined,
         // a made-up response body whose shape was never compared to a real one
@@ -277,7 +318,7 @@ export const planTools: ToolDef[] = [
       const upcoming = plan.find((s) => s.num !== num && s.status === "queued");
       ctx.step.current = upcoming?.num ?? num + 1;
       return {
-        content: `OK: step ${step.num} = ${step.status}${partial ? " (recorded as warn, not pass: part of what the step covers was not checked)" : ""}. ${upcoming ? `Next: step ${upcoming.num} — "${upcoming.description}".` : "That was the last step — call finish."}`,
+        content: `OK: step ${step.num} = ${step.status}${disputed ? " (recorded as warn, not pass: a check the framework ran does not hold)" : partial ? " (recorded as warn, not pass: part of what the step covers was not checked)" : ""}. ${upcoming ? `Next: step ${upcoming.num} — "${upcoming.description}".` : "That was the last step — call finish."}`,
       };
     },
   },

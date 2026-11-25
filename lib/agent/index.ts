@@ -88,6 +88,8 @@ async function cutOffStep(ctx: ToolContext, spent: number): Promise<string | nul
   const consoleErrors = ctx.net.takeConsoleErrors().slice(0, 5).map((e) => redact(ctx, e));
   // the requests seen on this step are not evidence for the next one
   ctx.net.proof([], "");
+  ctx.flashSeen = [];
+  ctx.seenTexts = [];
   const step = {
     num,
     description: planned.description,
@@ -238,6 +240,9 @@ export async function runAgent(
       actionStarted: Date.now(),
       dialogPolicy: null,
       planQueried: false,
+      checksQueried: null,
+      flashSeen: [],
+      seenTexts: [],
       notices: [],
       flashShot: null,
       persist,

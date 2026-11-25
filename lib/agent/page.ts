@@ -6,6 +6,7 @@ import { pushEvent } from "../store";
 import { readPage } from "./snapshot";
 import { type RunEvent } from "../types";
 import { REF_RE, type ToolContext, type ToolResult } from "./context";
+import { pageText } from "./checks";
 
 export async function locate(
   page: Page,
@@ -234,6 +235,9 @@ export async function actionResult(ctx: ToolContext, msg: string): Promise<ToolR
     ctx.lastTree = read.view;
     ctx.lastFull = read.full;
   }
+  // what the page said at this moment of the step, for checks made when it has moved on
+  const said = await pageText(ctx);
+  if (said) ctx.seenTexts = [...ctx.seenTexts.slice(-(MAX_SEEN_TEXTS - 1)), said.slice(0, MAX_SEEN_CHARS)];
   // a click moves keyboard focus to what was clicked; that alone is not the page answering
   const unchanged = read ? changes.startsWith(NO_CHANGES) || sameButFocus(before, read.full) : null;
   // the first look at a page has nothing to compare with: that is not "unchanged"
@@ -248,6 +252,10 @@ function sameButFocus(before: string | null, after: string): boolean {
   const plain = (t: string) => t.replace(/\s*\[ref=[^\]]+\]/g, "").replace(/ \[active\]/g, "");
   return plain(before) === plain(after);
 }
+
+// the states of a step a check can look back at
+const MAX_SEEN_TEXTS = 12;
+const MAX_SEEN_CHARS = 30_000;
 
 export const MAX_CHANGE_LINES = 40;
 const NO_CHANGES = "Changes since the previous page tree: NONE";

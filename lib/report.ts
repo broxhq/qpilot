@@ -1,6 +1,6 @@
 import type { Dict } from "./i18n";
 import { groupSteps } from "./steps";
-import type { RequestProof, Run, StepResult } from "./types";
+import type { RequestProof, Run, StepCheck, StepResult } from "./types";
 import { formatDuration } from "./utils";
 
 // The run as something a tester can take away: Markdown for pasting into a
@@ -24,6 +24,16 @@ function counts(run: Run, t: Dict): string {
 }
 
 const statusLabel = (run: Run, t: Dict) => t.status[run.status]?.label ?? run.status;
+
+/** "✓ the page has «Saved»" — what a check the framework ran found, and whether that was what the step asked for. */
+export function checkLine(c: StepCheck, t: Dict): string {
+  const found = c.kind.startsWith("page")
+    ? c.present ? t.checkPageHas : t.checkPageNo
+    : c.where
+      ? (c.present ? t.checkRequestHas : t.checkRequestNo).replace("{where}", c.where)
+      : c.present ? t.checkAnyHas : t.checkAnyNo;
+  return `${c.holds ? "✓" : "✗"} ${found} «${c.text}»${c.holds ? "" : ` — ${t.checkMismatch}`}`;
+}
 
 /** "POST https://… → 200 [ping]" */
 export function requestLine(r: RequestProof): string {
@@ -49,6 +59,7 @@ export function reportMarkdown(run: Run, elapsedMs: number, t: Dict): string {
       if (failed && s.expected) out.push(`   - ${t.expected}: ${s.expected}`);
       if (s.evidence) out.push(failed ? `   - ${t.actual}: ${s.evidence}` : `   - ${s.evidence}`);
       if (s.reviewer) out.push(`   - ⚠ ${t.reviewerObjects}: ${s.reviewer}`);
+      if (s.checks?.length) out.push(`   - ${t.checksTitle}: ${s.checks.map((c) => checkLine(c, t)).join("; ")}`);
       for (const r of s.requests ?? []) {
         out.push(`   - ${t.proofRequests}: \`${requestLine(r)}\` (${t.proofSentAfter}: ${r.after})`);
         const block = (label: string, text: string) =>
@@ -100,6 +111,13 @@ export function reportHtml(
       (!failed && s.evidence ? `<p class="ev">${esc(s.evidence)}</p>` : "") +
       (s.mockUnverified ? `<p class="ev" style="color:${COLOR.warn}">⚠ ${esc(t.mockUnverified)}</p>` : "");
     if (s.reviewer) rows.push(`<dt>⚠</dt><dd style="color:${COLOR.warn}">${esc(t.reviewerObjects)}: ${esc(s.reviewer)}</dd>`);
+    if (s.checks?.length) {
+      rows.push(
+        `<dt>${esc(t.checksTitle)}</dt><dd>${s.checks
+          .map((c) => `<span style="color:${c.holds ? COLOR.pass : COLOR.fail}">${esc(checkLine(c, t))}</span>`)
+          .join("<br>")}</dd>`,
+      );
+    }
     if (s.consoleErrors?.length) {
       rows.push(
         `<dt>${esc(t.consoleErrors)}</dt><dd>${s.consoleErrors.map(esc).join("<br>")}</dd>`,

@@ -726,6 +726,21 @@ export class NetworkMonitor {
     }));
   }
 
+  /**
+   * Does request #n — or, with no number, any recorded request — carry `text`
+   * in its URL or body, as sent or once decoded? For checks the framework runs.
+   */
+  carries(text: string, n?: number): { known: boolean; present: boolean; where?: string } {
+    const needle = text.trim().toLowerCase();
+    const all = [...this.log, ...this.assets];
+    const pool = n === undefined ? all : all.filter((e) => e.n === n);
+    if (n !== undefined && pool.length === 0) return { known: false, present: false };
+    // the latest one that has it: the step is about what was sent last
+    const hit = [...pool].reverse().find((e) => haystack(e).includes(needle));
+    const about = hit ?? (n !== undefined ? pool[0] : undefined);
+    return { known: true, present: !!hit, where: about ? `${about.method} ${shortUrl(about.url)}` : undefined };
+  }
+
   /** Errors logged since the previous call — for the per-step note in the report. */
   takeConsoleErrors(): string[] {
     const fresh = this.consoleErrors.slice(this.consoleRead);

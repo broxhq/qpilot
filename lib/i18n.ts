@@ -43,6 +43,17 @@ export interface Dict {
   actual: string;
   consoleErrors: string;
   /** Heading of the requests attached to a step as proof, and the labels inside one. */
+  /** Checks the framework ran itself: the heading, what was found, and the note for one that did not hold. */
+  checksTitle: string;
+  checkPageHas: string;
+  checkPageNo: string;
+  checkRequestHas: string;
+  checkRequestNo: string;
+  checkAnyHas: string;
+  checkAnyNo: string;
+  checkMismatch: string;
+  /** Added to the evidence of a pass recorded as warn because a check did not hold. */
+  checkFailed: string;
   proofRequests: string;
   proofSentAfter: string;
   proofRequestBody: string;
@@ -219,6 +230,15 @@ const en: Dict = {
   expected: "Expected",
   actual: "Actual",
   consoleErrors: "Console errors during this step",
+  checksTitle: "Checked by code",
+  checkPageHas: "the page has",
+  checkPageNo: "the page does not have",
+  checkRequestHas: "the request {where} has",
+  checkRequestNo: "the request {where} does not have",
+  checkAnyHas: "a request has",
+  checkAnyNo: "no request has",
+  checkMismatch: "the opposite was expected",
+  checkFailed: "A check run by code did not hold",
   proofRequests: "Requests behind the verdict",
   proofSentAfter: "sent after",
   proofRequestBody: "Request body",
@@ -409,6 +429,15 @@ const ru: Dict = {
   expected: "Ожидалось",
   actual: "Фактически",
   consoleErrors: "Ошибки в консоли на этом шаге",
+  checksTitle: "Проверено кодом",
+  checkPageHas: "на странице есть",
+  checkPageNo: "на странице нет",
+  checkRequestHas: "в запросе {where} есть",
+  checkRequestNo: "в запросе {where} нет",
+  checkAnyHas: "в запросах есть",
+  checkAnyNo: "в запросах нет",
+  checkMismatch: "ожидалось обратное",
+  checkFailed: "Проверка кодом не сошлась",
   proofRequests: "Запросы, на которых основан вердикт",
   proofSentAfter: "отправлен после",
   proofRequestBody: "Тело запроса",

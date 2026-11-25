@@ -21,6 +21,22 @@ export interface RequestProof {
   responseBody?: string;
 }
 
+/**
+ * A literal condition of a step's expected result, run by the framework: a text
+ * on the page, or in the URL or body of a request. `present` is what was found,
+ * `holds` whether that is what the condition asked for.
+ */
+export interface StepCheck {
+  kind: "page_has" | "page_lacks" | "request_has" | "request_lacks";
+  text: string;
+  /** The request's number in the log, when the check named one. */
+  request?: number;
+  /** "POST host/path" of the request the check was about, or found the text in. */
+  where?: string;
+  present: boolean;
+  holds: boolean;
+}
+
 export interface StepResult {
   num: number;
   description: string;
@@ -29,6 +45,8 @@ export interface StepResult {
   expected?: string;
   evidence?: string;
   screenshot?: string;
+  /** Conditions of the expected result that the framework ran itself, with what it found. */
+  checks?: StepCheck[];
   /** The requests the evidence is about — attached in full, next to the screenshot. */
   requests?: RequestProof[];
   /** JS console errors logged while the step ran — shown as a note, never changes the status. */

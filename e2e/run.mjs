@@ -800,6 +800,85 @@ try {
     assert.equal(meant.run.steps.length, 2, "the same plan sent a second time is accepted: the question is asked once");
     console.log("✓ a plan longer than the test case is questioned once, and accepted when sent again");
   }
+
+  // ── 17. checks the model names are run by the framework on the real page and request log ──
+  {
+    const plan = (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open the order — the total is 3 980 ₽"] }] })];
+    const open = (_tree, call) => [call("navigate", { url: site.url + "order" })];
+    const total = { kind: "page_has", text: "Total: 3 980 ₽" };
+    const report = (status, checks) => (_tree, call) => [
+      call("report_step", { num: 1, expected: "the total is 3 980 ₽", evidence: "the total reads 3 980 ₽", checks, status }),
+    ];
+    const done = (_tree, call) => [call("finish", { status: "passed", summary: "Done." })];
+    const text = `Order\nURL: ${site.url}order\n1. Open the order.\n   Expected result: the total is 3 980 ₽.`;
+
+    // a pass whose check does not hold is turned down with what the page has instead; the agent then reports a fail
+    const corrected = await runWith([plan, open, report("pass", [total]), report("fail", [total]), done], text, { QPILOT_VISION: "0" });
+    assert.match(
+      toolResults(corrected.model.requests.at(-1)).find((c) => c.startsWith("Error: not recorded. The framework ran your checks")) ?? "",
+      /- page_has "Total: 3 980 ₽": the page has no such text\. Nearest on the page: "Total: 3 890 ₽"/,
+      "a pass with a check that does not hold is not recorded, and the answer says what the page has in its place",
+    );
+    assert.deepEqual(corrected.run.steps.map((s) => s.status), ["fail"], "reported again as a fail, the step is recorded as one");
+    assert.deepEqual(corrected.run.steps[0].checks, [{ kind: "page_has", text: "Total: 3 980 ₽", present: false, holds: false }], "the check goes with the step: what was looked for and that it is not there");
+
+    // the same pass sent twice is recorded, but as a warn that names the check
+    const insisted = await runWith([plan, open, report("pass", [total]), report("pass", [total]), done], text, { QPILOT_VISION: "0" });
+    assert.deepEqual([insisted.run.steps[0].status, insisted.run.steps[0].evidence], ["warn", "the total reads 3 980 ₽ A check run by code did not hold: «Total: 3 980 ₽»."], "a pass that insists against its own check becomes a warn");
+
+    // text split across elements is one text to a reader; a check about a request finds the field in a Blob beacon
+    const pay = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Press Pay — Order_Paid is sent with orderId and amount"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "paid" })],
+        (tree, call) => [call("click", { ref: ref(tree, /button "Pay"/), name: "Pay" })],
+        (_tree, call, results) => [
+          call("report_step", {
+            num: 1, expected: "Order_Paid is sent with orderId and amount", evidence: "the event has amount but no orderId", status: "fail",
+            checks: [
+              { kind: "page_has", text: "paid" },
+              { kind: "request_has", text: "ORDER_PAID" },
+              { kind: "request_has", text: "orderId", request: Number(results.find((c) => c.startsWith("OK: clicked Pay")).match(/#(\d+) POST [^\n]*\/collect/)[1]) },
+              { kind: "request_lacks", text: "password" },
+            ],
+          }),
+          call("finish", { status: "failed", summary: "Done." }),
+        ],
+      ],
+      "Checkout\n1. Press Pay.",
+      { QPILOT_VISION: "0" },
+    );
+    const [onPage, anyRequest, byNumber, lacks] = pay.run.steps[0].checks;
+    assert.deepEqual([onPage.present, onPage.holds], [true, true], "a text on the page is found in any letter case");
+    assert.deepEqual([anyRequest.present, anyRequest.holds], [true, true], "a value is found in the body of a Blob beacon, with no request named");
+    assert.match(anyRequest.where, /^POST [^ ]*\/collect$/, "…and the check says which request had it");
+    assert.deepEqual([byNumber.present, byNumber.holds], [false, false], "a field the named request does not carry is reported as absent");
+    assert.deepEqual([lacks.present, lacks.holds], [false, true], "request_lacks holds when no request carries the text");
+    assert.equal(pay.run.steps[0].status, "fail", "a fail keeps its verdict: a check that does not hold is what a fail is about");
+    assert.equal(pay.run.steps[0].requests?.length, 1, "the request a check named is attached to the step as proof");
+
+    // a step about several states: what an earlier tab showed is no longer on the page when the step is reported
+    const tab = (name) => (tree, call) => [call("click", { ref: ref(tree, new RegExp(`tab "${name}"`)), name })];
+    const tabs = await runWith(
+      [
+        (_tree, call) => [call("set_plan", { groups: [{ steps: ["Open every country tab — each shows a price in USD"] }] })],
+        (_tree, call) => [call("navigate", { url: site.url + "countries-ok" })],
+        tab("Kenya"), tab("Uganda"), tab("Tanzania"),
+        (_tree, call) => [
+          call("report_step", {
+            num: 1, expected: "each shows a price in USD", evidence: "Kenya 10 USD, Uganda 12 USD, Tanzania 9 USD", status: "pass",
+            checks: [{ kind: "page_has", text: "Kenya — Price: 10 USD" }, { kind: "page_has", text: "Tanzania — Price: 9 USD" }, { kind: "page_lacks", text: "Kenya — Price: 10 USD" }],
+          }),
+          call("finish", { status: "passed", summary: "Done." }),
+        ],
+      ],
+      "Prices\n1. Open every country tab.",
+      { QPILOT_VISION: "0" },
+    );
+    assert.deepEqual(tabs.run.steps[0].checks.map((c) => [c.present, c.holds]), [[true, true], [true, true], [false, true]], "page_has is true of what an earlier tab of the step showed; page_lacks is about the page as it is now");
+    assert.equal(tabs.run.steps[0].status, "pass");
+    console.log("✓ checks named by the model are run on the page and the request log; a pass against its own check is questioned, then recorded as warn");
+  }
 } catch (err) {
   failed = true;
   console.error(`✗ e2e failed: ${err.message}`);

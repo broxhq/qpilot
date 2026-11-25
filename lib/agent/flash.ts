@@ -196,6 +196,7 @@ export async function watchFlashes(ctx: ToolContext): Promise<void> {
     if (times > SAME_TEXT_TIMES) return;
     if (ctx.notices.filter((n) => n.startsWith(FLASH_NOTE)).length >= MAX_UNREAD) return;
     if (shot) ctx.flashShot = shot;
+    ctx.flashSeen.push(text);
     // the model reads the message as it was; the log gets the masked copy
     ctx.notices.push(`${FLASH_NOTE}: "${text}". It is no longer in the page tree — this is what it said.`);
     note(ctx, null, { type: "flash", message: redact(ctx, text) });

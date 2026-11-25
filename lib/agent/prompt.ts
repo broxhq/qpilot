@@ -33,6 +33,7 @@ Mostly just call tools. Write a sentence or two first in two cases: when an acti
 
 VERDICTS
 - report_step: num from the plan; expected = the step's expected result from the test case; evidence = what you saw — a quote from the page, a request and its status, a message, verbatim; status last, decided from that evidence. No refs (e12) in any text.
+- When the expected result is literal — a text that must be on the page, a field that must be in a request — put it in checks as well: the framework runs them on the real page and the request log, so a misread digit or name is caught there.
 - Each step is reported once, when its outcome is known. A failed step does not end the run: go on with the next one. Only a failed precondition does (cannot log in, the page does not load): report step 1 as fail and finish.
 - A step about several items (each, every, all, a list of values) is done for every item. If you checked only some, name the rest in not_checked: the step is then recorded as partial, which is honest; a pass on one item out of five is not.
 - A step that compares with an earlier state: save the earlier value with note BEFORE the page changes — old page trees are not kept.

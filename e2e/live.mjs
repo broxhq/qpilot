@@ -59,6 +59,12 @@ const CASES = {
     expect: ["fail"],
     says: [/tanzania/i],
   },
+  "countries-ok": {
+    about: "the same step with every item right — must be passed, though only the last tab is on screen at the end",
+    text: (url) => `Prices\nURL: ${url}countries-ok\n1. Open every country tab in turn.\n   Expected result: each country shows a price in USD.`,
+    expect: ["pass"],
+    says: [/kenya/i, /uganda/i, /tanzania/i],
+  },
   bell: {
     about: "an unnamed icon in a header that sits at the end of the DOM, and a namesake block down the page",
     text: (url) => `Notices\nURL: ${url}big\n1. Open the notices panel with the bell icon in the header (the second icon).\n   Expected result: the panel opens and lists fresh notices.`,
@@ -76,6 +82,37 @@ const CASES = {
     text: (url) => `Header\nURL: ${url}crowded\n1. Find the bell icon in the header: it is the second icon, it has no caption.\n   Expected result: the header has two icons.`,
     expect: ["pass"],
     says: [/icon|button|иконк/i],
+  },
+  // ── the expected result is almost what the page shows ──
+  digits: {
+    about: "a total with two digits swapped: 3 890 where 3 980 is expected",
+    text: (url) => `Order\nURL: ${url}order\n1. Open the order.\n   Expected result: the total is 3 980 ₽.`,
+    expect: ["fail"],
+    says: [/3.?890/],
+  },
+  "digits-ok": {
+    about: "the same order with the right total — must not be failed",
+    text: (url) => `Order\nURL: ${url}order-ok\n1. Open the order.\n   Expected result: the total is 3 980 ₽.`,
+    expect: ["pass"],
+    says: [/3.?980/],
+  },
+  team: {
+    about: "a list one short of the five the step names",
+    text: (url) => `Team\nURL: ${url}team\n1. Open the team page.\n   Expected result: the list shows five members: Anna, Boris, Clara, Dmitri, Elena.`,
+    expect: ["fail"],
+    says: [/Elena/],
+  },
+  stale: {
+    about: "the page already says Saved, and this save fails on the server",
+    text: (url) => `Profile\nURL: ${url}stale\n1. Press Save.\n   Expected result: the profile is saved, the status shows "Saved".`,
+    expect: ["fail"],
+    says: [/500|unavailable/i],
+  },
+  paid: {
+    about: "an analytics event sent without one of the parameters the step lists",
+    text: (url) => `Checkout\nURL: ${url}paid\n1. Press Pay.\n   Expected result: the event Order_Paid is sent with the parameters orderId, amount and currency.`,
+    expect: ["fail"],
+    says: [/orderId/],
   },
   switches: {
     about: "a real defect: a click next to a switch toggles it",
@@ -139,6 +176,7 @@ const base = `http://127.0.0.1:${port}`;
 // these pages need no sign-in, and a test site must not end up among your saved sign-ins
 const app = spawn("node", [SERVER], { env: { QPILOT_SESSIONS: "0", ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1" }, stdio: ["ignore", "ignore", "inherit"] });
 let wrong = 0;
+let broken = 0;
 const tally = [];
 try {
   await waitFor(`${base}/api/runs`);
@@ -156,15 +194,21 @@ try {
       const evidence = run.steps.map((s) => s.evidence ?? "").join(" ");
       const verdict = JSON.stringify(got) === JSON.stringify(c.expect);
       const reason = c.says.every((re) => re.test(evidence));
-      const ok = !asked && verdict && reason;
+      // a run that never reached the model (no network, a gateway error) says nothing about the agent
+      const broke = run.status === "error" && run.steps.every((s) => !s.evidence);
+      const ok = !broke && !asked && verdict && reason;
       // a right verdict for the wrong reason is not a right run: say which it was
-      const why = ok ? "" : asked ? "asked the user and was stopped" : !verdict ? "wrong verdict" : "right verdict, wrong reason";
-      if (ok) right++;
+      const why = ok ? "" : broke ? "the run broke, not a verdict" : asked ? "asked the user and was stopped" : !verdict ? "wrong verdict" : "right verdict, wrong reason";
+      if (broke) broken++;
+      else if (ok) right++;
       else wrong++;
       const actions = events.filter((e) => e.kind === "action").map((e) => e.toolName);
       // calls the framework turned down: a guard at work, worth seeing even in a run that came out right
       const refused = events.filter((e) => e.kind === "observation" && e.text?.startsWith("Error")).map((e) => e.text.split(/[.:]\s/)[1] ?? "");
-      console.log(`  ${ok ? "✓" : "✗"} run ${n}: ${got.join(", ") || "(no steps)"}${why ? ` — ${why}` : ""} · ${actions.length} tool calls, ${run.stats?.calls ?? "?"} model calls, ${Math.round((Date.now() - started) / 1000)} s${refused.length ? ` · refused: ${refused.join("; ").slice(0, 120)}` : ""}`);
+      // conditions the framework ran itself: how many the agent named, and how many held
+      const checks = run.steps.flatMap((s) => s.checks ?? []);
+      const checked = checks.length ? ` · checks: ${checks.filter((c) => c.holds).length}/${checks.length} hold` : "";
+      console.log(`  ${ok ? "✓" : broke ? "?" : "✗"} run ${n}: ${got.join(", ") || "(no steps)"}${why ? ` — ${why}` : ""} · ${actions.length} tool calls, ${run.stats?.calls ?? "?"} model calls, ${Math.round((Date.now() - started) / 1000)} s${checked}${refused.length ? ` · refused: ${refused.join("; ").slice(0, 120)}` : ""}`);
       // the details of a run are worth reading only when it went wrong, or once per case
       if (!ok || n === 1) {
         for (const s of run.steps) console.log(`      ${s.num}. [${s.status}] ${s.evidence ?? ""}${s.reviewer ? `\n         reviewer: ${s.reviewer}` : ""}`);
@@ -189,4 +233,5 @@ console.log(`\n${names.length} cases × ${RUNS} runs`);
 console.log(`right every time:   ${every} of ${names.length}${every < names.length ? ` (not: ${tally.filter((t) => t.right < RUNS).map((t) => `${t.name} ${t.right}/${RUNS}`).join(", ")})` : ""}`);
 console.log(`right at least once: ${once} of ${names.length}`);
 console.log(`runs right:          ${tally.reduce((n, t) => n + t.right, 0)} of ${names.length * RUNS}`);
-process.exit(wrong ? 1 : 0);
+if (broken) console.log(`${broken} run(s) broke before a verdict (no network, a gateway error): they say nothing about the agent — run again.`);
+process.exit(wrong || broken ? 1 : 0);

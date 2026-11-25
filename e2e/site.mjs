@@ -120,6 +120,8 @@ const countries = `<!doctype html><html lang="en"><head><meta charset="utf-8"><t
 const prices = { Kenya: "Price: 10 USD", Uganda: "Price: 12 USD", Tanzania: "Price is not set" };
 function show(c) { document.getElementById("panel").textContent = c + " — " + prices[c]; }
 </script></body></html>`;
+// the same page with nothing wrong: a step about every item must be passed, too
+const countriesOk = countries.replace("Price is not set", "Price: 9 USD");
 
 // The same form with nothing on the page to say the field is required: no
 // asterisk, only aria-required, which the page tree does not show. The first
@@ -185,6 +187,38 @@ ${below}
 </div></div>
 </body></html>`;
 
+// Pages for verdicts that are easy to get wrong by reading carelessly: the
+// expected result is ALMOST what the page shows.
+// A total with two digits swapped (2 990 + 990 is 3 980, the page says 3 890).
+const order = (total) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Order</title></head><body>
+<h1>Order 1042</h1>
+<table><tr><th>Item</th><th>Price</th></tr><tr><td>Backpack</td><td>2 990 ₽</td></tr><tr><td>Jacket</td><td>990 ₽</td></tr></table>
+<p>Total: <b>${total} ₽</b></p>
+</body></html>`;
+// A list one short of what the heading and the test case promise.
+const team = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Team</title></head><body>
+<h1>Team (5)</h1><ul><li>Anna</li><li>Boris</li><li>Clara</li><li>Dmitri</li></ul>
+</body></html>`;
+// The status already says "Saved" from an earlier save; this save fails on the
+// server and the page does not say so. The words on the page are right, the fact is not.
+const stale = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Stale</title></head><body>
+<h1>Profile</h1><label>Name <input id="name" value="Tester"></label>
+<button onclick="save()">Save</button> <span id="status" role="status">Saved</span>
+<script>
+async function save() {
+  await fetch("/api/fail", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: document.getElementById("name").value }) });
+}
+</script></body></html>`;
+// An analytics event that goes out without one of the parameters the test case lists.
+const paid = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pay</title></head><body>
+<h1>Checkout</h1><button onclick="pay()">Pay</button> <span id="status" role="status"></span>
+<script>
+function pay() {
+  navigator.sendBeacon("/collect", new Blob([JSON.stringify({ event: "Order_Paid", amount: 3980, currency: "RUB" })], { type: "application/json" }));
+  document.getElementById("status").textContent = "Paid";
+}
+</script></body></html>`;
+
 /** Starts the site on a free port. `seen` collects what the page reported. */
 export function startSite() {
   const seen = [];
@@ -212,13 +246,17 @@ export function startSite() {
       res.writeHead(204);
       return res.end();
     }
+    if (req.url === "/api/fail") {
+      res.writeHead(500, { "content-type": "application/json" });
+      return res.end('{"error":"storage is unavailable"}');
+    }
     if (req.url === "/api/save") {
       seen.push("save");
       res.writeHead(200, { "content-type": "application/json" });
       return res.end('{"ok":true}');
     }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : req.url === "/events" ? events : req.url === "/crowded" ? crowded : page);
+    res.end(req.url === "/panel" ? panel : req.url === "/big" ? big : req.url === "/toast" ? toast : req.url === "/form" ? form : req.url === "/otp" ? otp : req.url === "/unmarked" ? unmarked : req.url === "/countries" ? countries : req.url === "/countries-ok" ? countriesOk : req.url === "/events" ? events : req.url === "/crowded" ? crowded : req.url === "/order" ? order("3 890") : req.url === "/order-ok" ? order("3 980") : req.url === "/team" ? team : req.url === "/stale" ? stale : req.url === "/paid" ? paid : page);
   });
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () =>
