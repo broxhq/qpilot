@@ -5,11 +5,11 @@ import { FlatCompat } from "@eslint/eslintrc";
 const compat = new FlatCompat({ baseDirectory: dirname(fileURLToPath(import.meta.url)) });
 
 const config = [
-  { ignores: [".next/**", "node_modules/**", "next-env.d.ts"] },
+  { ignores: [".next/**", "node_modules/**", "desktop/node_modules/**", "desktop/dist/**", "next-env.d.ts"] },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     // plain Node scripts: CommonJS on purpose, they run before anything is built
-    files: ["bin/**", "scripts/**"],
+    files: ["bin/**", "scripts/**", "desktop/**"],
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   {

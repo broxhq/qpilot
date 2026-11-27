@@ -1,0 +1,17 @@
+{
+  "name": "qpilot-desktop",
+  "productName": "qpilot",
+  "private": true,
+  "version": "0.0.0",
+  "description": "qpilot as an app: the same server, in a window, with nothing to install first",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node build.mjs",
+    "smoke": "node smoke.mjs"
+  },
+  "devDependencies": {
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0"
+  }
+}

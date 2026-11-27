@@ -53,7 +53,8 @@ jobs:
 
       - run: npm publish --access public
 
+      # the desktop workflow builds from the same tag and may have made the release already
       - name: GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
