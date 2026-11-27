@@ -9,7 +9,7 @@
 // On a machine nobody has tried the app on — CI's Windows — this is the first user.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -96,6 +96,29 @@ try {
     if (stray && !failed) failed = "the server has an icon of its own in the Dock";
   }
 
+  // "Download report" must leave a file in the Downloads folder (here: a folder of the test's own, and no Finder window)
+  const downloads = join(home, "downloads");
+  mkdirSync(downloads);
+  await app.evaluate(({ app: electron, shell }, dir) => {
+    electron.setPath("downloads", dir);
+    shell.showItemInFolder = () => {};
+  }, downloads);
+  await page.getByRole("button", { name: "Download report" }).click();
+  const report = join(downloads, `qpilot-${id}.html`);
+  for (let i = 0; i < 30 && !existsSync(report); i++) await new Promise((r) => setTimeout(r, 500));
+  if (!existsSync(report) && !failed) failed = "the report was not saved to the Downloads folder";
+
+  // "Copy report" puts the report on the clipboard (what was there before is put back)
+  const before = await app.evaluate(({ clipboard }) => clipboard.readText());
+  await page.getByRole("button", { name: "Copy report" }).click();
+  let copied = "";
+  for (let i = 0; i < 10 && !copied.includes("Switches"); i++) {
+    await new Promise((r) => setTimeout(r, 300));
+    copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+  }
+  await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), before);
+  if (!copied.includes("Switches") && !failed) failed = "the report was not copied to the clipboard";
+
   // closing the window is how a person quits: the app and its server must both go
   const gone = app.waitForEvent("close", { timeout: 30_000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
@@ -118,5 +141,5 @@ if (failed) {
   console.error(`✗ ${failed}`);
   process.exit(1);
 }
-console.log("✓ the app starts its server, opens its window, runs a test case in Chrome and stops the server when closed");
+console.log("✓ the app starts its server, opens its window, runs a test case in Chrome, saves and copies the report, and stops the server when closed");
 process.exit(0);

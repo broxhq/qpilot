@@ -8,7 +8,7 @@
 // ELECTRON_RUN_AS_NODE. So the app needs no Node on the machine, and the server
 // behaves exactly as it does under `npx qpilot`. Chrome is still the user's own.
 
-const { app, BrowserWindow, Menu, dialog, nativeTheme, net, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, nativeTheme, net, session, shell } = require("electron");
 const { execFile, spawn } = require("node:child_process");
 const { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { createServer } = require("node:net");
@@ -185,6 +185,21 @@ function createWindow() {
   void win.loadURL(base);
 }
 
+/**
+ * "Download report": the file goes to the Downloads folder, as in a browser, and
+ * is shown there. Left to Electron's defaults the button did nothing a person
+ * could see: the download was announced (will-download) and never finished.
+ */
+function saveDownloads() {
+  session.defaultSession.on("will-download", (_event, item) => {
+    const path = join(app.getPath("downloads"), item.getFilename());
+    item.setSavePath(path);
+    item.once("done", (_e, state) => {
+      if (state === "completed") shell.showItemInFolder(path);
+    });
+  });
+}
+
 function menu() {
   const mac = process.platform === "darwin";
   return Menu.buildFromTemplate([
@@ -273,6 +288,7 @@ async function main() {
     if (!quitting) app.quit();
   });
   Menu.setApplicationMenu(menu());
+  saveDownloads();
   createWindow();
   void checkForUpdate();
 }
