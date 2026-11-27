@@ -29,6 +29,14 @@ That's the whole install. No test code, no selectors, no config files.
 **Needs:** Node.js 20.12+, Google Chrome, and an [Anthropic API key](https://console.anthropic.com)
 — or any OpenAI-compatible endpoint (Qwen, vLLM, Ollama, a corporate gateway).
 
+**No Node, no terminal?** qpilot also comes as an app for macOS and Windows:
+download it from the [latest release](https://github.com/broxhq/qpilot/releases/latest)
+(`mac-arm64.dmg` for Apple silicon, `mac-x64.dmg` for Intel, `win-x64.exe` for Windows),
+install, click the icon. It is the same qpilot and shares its settings with the
+command line; Chrome is still your own. The apps are not signed yet, so the first
+launch takes one more step: on macOS, System Settings → Privacy & Security →
+Open Anyway; on Windows, More info → Run anyway.
+
 ## What you get back
 
 Not "the test failed", but which step, what was expected, what the page actually
