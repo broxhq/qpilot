@@ -22,6 +22,10 @@ const FIRST_PORT = 3847;
 // here, and the pipe closing — a quit, a crash, a kill — is its signal to exit.
 // (Exiting, it closes the browsers it started.)
 const GUARD = 'process.stdin.resume(); process.stdin.on("end", () => process.exit(0)); require(process.argv[1]);';
+// On macOS the server runs in the helper executable: the app's own one, started
+// a second time, is taken by the system for another app and gets an icon in the
+// Dock ("exec", bouncing). The helper is the same Electron, marked as having no UI.
+const NODE = process.platform === "darwin" && process.helperExecPath ? process.helperExecPath : process.execPath;
 const RELEASES = "https://api.github.com/repos/broxhq/qpilot/releases/latest";
 
 // The few sentences the frame itself says. The pages have their own dictionaries.
@@ -81,7 +85,7 @@ function logFile() {
 /** Starts the server on `port`; resolves once it answers, rejects if it dies first. */
 function startServer(port, log) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", GUARD, join(SERVER_DIR, "server.js")], {
+    const child = spawn(NODE, ["-e", GUARD, join(SERVER_DIR, "server.js")], {
       cwd: SERVER_DIR,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", PORT: String(port), HOSTNAME: "127.0.0.1" },
       stdio: ["pipe", "pipe", "pipe"],

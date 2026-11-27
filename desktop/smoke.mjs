@@ -8,6 +8,7 @@
 //
 // On a machine nobody has tried the app on — CI's Windows — this is the first user.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -53,7 +54,10 @@ writeFileSync(join(home, "config.json"), JSON.stringify({ provider: "custom", ba
 const { ELECTRON_RUN_AS_NODE: _drop, ...env } = process.env;
 const app = await _electron.launch({
   // from the sources: the Electron installed next to this file (the package's main is the path to its binary)
-  ...(packed ? { executablePath: packedApp(), args: [] } : { executablePath: createRequire(import.meta.url)("electron"), args: [here] }),
+  // its own profile folder: a qpilot the person has open must not take this launch for a second window of itself
+  ...(packed
+    ? { executablePath: packedApp(), args: [`--user-data-dir=${join(home, "profile")}`] }
+    : { executablePath: createRequire(import.meta.url)("electron"), args: [here, `--user-data-dir=${join(home, "profile")}`] }),
   env: { ...env, QPILOT_HOME: home, QPILOT_SESSIONS: "0", QPILOT_VISION: "0", QPILOT_NO_UPDATE_CHECK: "1" },
   timeout: 60_000,
 });
@@ -82,6 +86,15 @@ try {
   console.log(`${packed ? "packed app" : "app from sources"}: run ${run?.status}, steps ${steps.join(", ") || "none"}`);
   if (run?.status !== "passed" || steps.join() !== "pass,pass") failed = `expected a passed run with two passed steps`;
   if (process.argv.includes("--shot")) await page.screenshot({ path: join(here, "dist", "smoke.png") });
+
+  // macOS: the server must not show up as an app of its own (a second icon in the Dock)
+  if (process.platform === "darwin") {
+    // (this app's server, by the port it listens on: another qpilot may be open on the machine)
+    const pid = execFileSync("lsof", ["-ti", `tcp:${new URL(origin).port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).trim().split("\n")[0];
+    const apps = execFileSync("lsappinfo", ["list"], { encoding: "utf8" }).split(/\n(?=\s*\d+\) )/);
+    const stray = apps.find((a) => new RegExp(`pid = ${pid}\\b`).test(a) && /type="Foreground"/.test(a));
+    if (stray && !failed) failed = "the server has an icon of its own in the Dock";
+  }
 
   // closing the window is how a person quits: the app and its server must both go
   const gone = app.waitForEvent("close", { timeout: 30_000 });
